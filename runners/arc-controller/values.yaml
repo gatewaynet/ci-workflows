@@ -1,0 +1,16 @@
+# ARC Controller - gha-runner-scale-set-controller
+# Helm chart: oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller
+# Docs: https://github.com/actions/actions-runner-controller
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+# Log level: debug, info, warn, error
+logLevel: info

@@ -1,0 +1,59 @@
+# Heavy Runner Scale Set
+# For: E2E tests (Playwright), Go race detection, multi-image builds, integration tests
+# Helm chart: oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
+
+githubConfigUrl: "https://github.com/gatewaynet"
+
+# Reference to K8s secret containing GitHub App credentials
+githubConfigSecret: github-arc-credentials
+
+# Runner labels - use in workflows with: runs-on: self-hosted-heavy
+runnerScaleSetName: self-hosted-heavy
+
+minRunners: 0
+maxRunners: 6
+
+containerMode:
+  type: "kubernetes"
+  kubernetesModeWorkVolumeClaim:
+    accessModes: ["ReadWriteOnce"]
+    storageClassName: "do-block-storage"
+    resources:
+      requests:
+        storage: 50Gi
+
+template:
+  spec:
+    containers:
+      - name: runner
+        image: ghcr.io/actions/actions-runner:latest
+        command: ["/home/runner/run.sh"]
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+          limits:
+            cpu: "4"
+            memory: 8Gi
+        env:
+          # Playwright needs these for headless browser
+          - name: DISPLAY
+            value: ":99"
+      # Docker-in-Docker sidecar for container builds on self-hosted
+      - name: dind
+        image: docker:dind
+        securityContext:
+          privileged: true
+        volumeMounts:
+          - name: docker-sock
+            mountPath: /var/run
+        resources:
+          requests:
+            cpu: "1"
+            memory: 2Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi
+    volumes:
+      - name: docker-sock
+        emptyDir: {}

@@ -1,0 +1,133 @@
+name: 'Monorepo Change Detection'
+description: 'Detect which services changed based on git diff, for monorepo matrix builds'
+
+inputs:
+  service-paths:
+    description: 'JSON object mapping service names to their paths (e.g. {"api-gateway":"cmd/api-gateway","game-engine":"cmd/game-engine"})'
+    required: true
+  shared-paths:
+    description: 'Comma-separated paths that affect ALL services (e.g. go.mod,go.sum,internal/domain,Dockerfile)'
+    required: false
+    default: ''
+  base-ref:
+    description: 'Base ref for comparison (defaults to develop for PRs, HEAD~1 for pushes)'
+    required: false
+    default: ''
+  skip-paths:
+    description: 'Comma-separated paths to ignore (e.g. docs/,.github/,*.md)'
+    required: false
+    default: ''
+
+outputs:
+  changed-services:
+    description: 'JSON array of changed service names'
+    value: ${{ steps.detect.outputs.changed_services }}
+  has-changes:
+    description: 'Whether any services changed'
+    value: ${{ steps.detect.outputs.has_changes }}
+  all-services:
+    description: 'JSON array of all service names'
+    value: ${{ steps.detect.outputs.all_services }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Detect changed services
+      id: detect
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Determine base ref
+        BASE_REF="${{ inputs.base-ref }}"
+        if [ -z "$BASE_REF" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_REF="origin/${{ github.base_ref }}"
+          else
+            BASE_REF="HEAD~1"
+          fi
+        fi
+
+        echo "Comparing against: $BASE_REF"
+
+        # Get changed files
+        CHANGED_FILES=$(git diff --name-only "$BASE_REF" HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+
+        if [ -z "$CHANGED_FILES" ]; then
+          echo "No changed files detected, marking all services as changed"
+          ALL_SERVICES=$(echo '${{ inputs.service-paths }}' | jq -r 'keys[]')
+          CHANGED_JSON=$(echo "$ALL_SERVICES" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          echo "changed_services=${CHANGED_JSON}" >> "$GITHUB_OUTPUT"
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          echo "all_services=${CHANGED_JSON}" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "Changed files:"
+        echo "$CHANGED_FILES"
+
+        # Check skip paths
+        SKIP_ONLY=true
+        IFS=',' read -ra SKIP_PATTERNS <<< "${{ inputs.skip-paths }}"
+        while IFS= read -r file; do
+          SKIPPED=false
+          for pattern in "${SKIP_PATTERNS[@]}"; do
+            pattern=$(echo "$pattern" | xargs)
+            if [ -n "$pattern" ] && [[ "$file" == $pattern ]]; then
+              SKIPPED=true
+              break
+            fi
+          done
+          if [ "$SKIPPED" = "false" ]; then
+            SKIP_ONLY=false
+            break
+          fi
+        done <<< "$CHANGED_FILES"
+
+        ALL_SERVICES=$(echo '${{ inputs.service-paths }}' | jq -r 'keys[]')
+        ALL_JSON=$(echo "$ALL_SERVICES" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+        echo "all_services=${ALL_JSON}" >> "$GITHUB_OUTPUT"
+
+        if [ "$SKIP_ONLY" = "true" ] && [ -n "${{ inputs.skip-paths }}" ]; then
+          echo "Only skipped paths changed, no services affected"
+          echo "changed_services=[]" >> "$GITHUB_OUTPUT"
+          echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Check shared paths (affect all services)
+        REBUILD_ALL=false
+        IFS=',' read -ra SHARED_PATTERNS <<< "${{ inputs.shared-paths }}"
+        for pattern in "${SHARED_PATTERNS[@]}"; do
+          pattern=$(echo "$pattern" | xargs)
+          if [ -n "$pattern" ] && echo "$CHANGED_FILES" | grep -q "$pattern"; then
+            echo "Shared path matched: $pattern -> rebuilding all services"
+            REBUILD_ALL=true
+            break
+          fi
+        done
+
+        if [ "$REBUILD_ALL" = "true" ]; then
+          echo "changed_services=${ALL_JSON}" >> "$GITHUB_OUTPUT"
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Check per-service paths
+        CHANGED_SERVICES=()
+        while IFS= read -r service; do
+          SERVICE_PATH=$(echo '${{ inputs.service-paths }}' | jq -r --arg s "$service" '.[$s]')
+          if echo "$CHANGED_FILES" | grep -q "^${SERVICE_PATH}"; then
+            CHANGED_SERVICES+=("$service")
+            echo "Service changed: $service (matched path: $SERVICE_PATH)"
+          fi
+        done <<< "$ALL_SERVICES"
+
+        if [ ${#CHANGED_SERVICES[@]} -eq 0 ]; then
+          echo "changed_services=[]" >> "$GITHUB_OUTPUT"
+          echo "has_changes=false" >> "$GITHUB_OUTPUT"
+        else
+          CHANGED_JSON=$(printf '%s\n' "${CHANGED_SERVICES[@]}" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          echo "changed_services=${CHANGED_JSON}" >> "$GITHUB_OUTPUT"
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+        fi

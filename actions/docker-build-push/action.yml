@@ -1,0 +1,121 @@
+name: 'Docker Build & Push'
+description: 'Build a Docker image with buildx and push to a container registry with multiple tags'
+
+inputs:
+  registry:
+    description: 'Container registry URL (e.g. registry.digitalocean.com/gatewaynet-service-repo)'
+    required: true
+  image-name:
+    description: 'Image name within the registry (e.g. affiliate-frontend)'
+    required: true
+  version-tag:
+    description: 'Primary version tag (e.g. dev-v1.0.5, pr-42, v1.0.0)'
+    required: true
+  extra-tags:
+    description: 'Comma-separated extra tags (e.g. dev-latest,develop-build-42)'
+    required: false
+    default: ''
+  build-args:
+    description: 'Newline-separated Docker build args (e.g. APP_VERSION=v1.0.0)'
+    required: false
+    default: ''
+  commit-sha:
+    description: 'Git commit SHA for build metadata'
+    required: true
+  branch:
+    description: 'Git branch name for build metadata'
+    required: false
+    default: ''
+  build-number:
+    description: 'CI build number for build metadata'
+    required: true
+  dockerfile:
+    description: 'Path to Dockerfile'
+    required: false
+    default: 'Dockerfile'
+  context:
+    description: 'Docker build context path'
+    required: false
+    default: '.'
+  push:
+    description: 'Whether to push the image (set false for verify-only builds)'
+    required: false
+    default: 'true'
+  use-buildx-cache:
+    description: 'Enable GitHub Actions buildx cache'
+    required: false
+    default: 'true'
+
+outputs:
+  image:
+    description: 'Full image reference (registry/name:tag)'
+    value: ${{ steps.build.outputs.image }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+
+    - name: Build and Push Image
+      id: build
+      shell: bash
+      run: |
+        IMAGE="${{ inputs.registry }}/${{ inputs.image-name }}"
+        TAGS="-t ${IMAGE}:${{ inputs.version-tag }}"
+
+        # Add extra tags
+        IFS=',' read -ra EXTRA <<< "${{ inputs.extra-tags }}"
+        for tag in "${EXTRA[@]}"; do
+          tag=$(echo "$tag" | xargs)
+          if [ -n "$tag" ]; then
+            TAGS="$TAGS -t ${IMAGE}:${tag}"
+          fi
+        done
+
+        # Standard build args (always injected)
+        BUILD_ARGS="--build-arg APP_VERSION=${{ inputs.version-tag }}"
+        BUILD_ARGS="$BUILD_ARGS --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        BUILD_ARGS="$BUILD_ARGS --build-arg COMMIT_SHA=${{ inputs.commit-sha }}"
+        BUILD_ARGS="$BUILD_ARGS --build-arg BUILD_NUMBER=${{ inputs.build-number }}"
+        if [ -n "${{ inputs.branch }}" ]; then
+          BUILD_ARGS="$BUILD_ARGS --build-arg BRANCH=${{ inputs.branch }}"
+        fi
+
+        # Custom build args
+        if [ -n "${{ inputs.build-args }}" ]; then
+          while IFS= read -r arg; do
+            arg=$(echo "$arg" | xargs)
+            if [ -n "$arg" ]; then
+              BUILD_ARGS="$BUILD_ARGS --build-arg $arg"
+            fi
+          done <<< "${{ inputs.build-args }}"
+        fi
+
+        # Cache flags
+        CACHE_FLAGS=""
+        if [ "${{ inputs.use-buildx-cache }}" = "true" ]; then
+          CACHE_FLAGS="--cache-from type=gha --cache-to type=gha,mode=max"
+        fi
+
+        # Build
+        docker buildx build \
+          $BUILD_ARGS \
+          $CACHE_FLAGS \
+          -f ${{ inputs.dockerfile }} \
+          $TAGS \
+          --load \
+          ${{ inputs.context }}
+
+        # Push
+        if [ "${{ inputs.push }}" = "true" ]; then
+          docker push ${IMAGE}:${{ inputs.version-tag }}
+          for tag in "${EXTRA[@]}"; do
+            tag=$(echo "$tag" | xargs)
+            if [ -n "$tag" ]; then
+              docker push ${IMAGE}:${tag}
+            fi
+          done
+        fi
+
+        echo "image=${IMAGE}:${{ inputs.version-tag }}" >> "$GITHUB_OUTPUT"

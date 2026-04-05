@@ -1,0 +1,45 @@
+name: 'ArgoCD Restart Deployment'
+description: 'Restart an ArgoCD-managed deployment after a new image is pushed'
+
+inputs:
+  app-name:
+    description: 'ArgoCD application name'
+    required: true
+  resource-name:
+    description: 'Kubernetes deployment resource name to restart'
+    required: true
+  argocd-server:
+    description: 'ArgoCD server hostname (e.g. argocd.example.com)'
+    required: true
+  argocd-auth-token:
+    description: 'ArgoCD authentication token'
+    required: true
+  kind:
+    description: 'Kubernetes resource kind'
+    required: false
+    default: 'Deployment'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install ArgoCD CLI
+      shell: bash
+      run: |
+        curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+        chmod +x /usr/local/bin/argocd
+
+    - name: Restart Deployment
+      shell: bash
+      run: |
+        echo "Restarting ${{ inputs.kind }} ${{ inputs.resource-name }} in ${{ inputs.app-name }}..."
+
+        argocd app actions run ${{ inputs.app-name }} restart \
+          --kind ${{ inputs.kind }} \
+          --resource-name ${{ inputs.resource-name }} \
+          --server ${{ inputs.argocd-server }} \
+          --auth-token ${{ inputs.argocd-auth-token }} \
+          --grpc-web \
+          --insecure
+
+        echo "### ArgoCD Restart Triggered" >> $GITHUB_STEP_SUMMARY
+        echo "App: \`${{ inputs.app-name }}\` | Resource: \`${{ inputs.resource-name }}\`" >> $GITHUB_STEP_SUMMARY

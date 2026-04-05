@@ -1,0 +1,28 @@
+name: 'DigitalOcean Registry Login'
+description: 'Authenticate with DigitalOcean Container Registry via doctl + docker login'
+
+inputs:
+  do-api-token:
+    description: 'DigitalOcean API token'
+    required: true
+  registry:
+    description: 'Container registry hostname'
+    required: false
+    default: 'registry.digitalocean.com'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install doctl
+      shell: bash
+      run: |
+        curl -sL https://github.com/digitalocean/doctl/releases/download/v1.100.0/doctl-1.100.0-linux-amd64.tar.gz | tar -xzv
+        sudo mv ./doctl /usr/local/bin
+
+    - name: Authenticate doctl
+      shell: bash
+      run: doctl auth init -t ${{ inputs.do-api-token }}
+
+    - name: Docker Login
+      shell: bash
+      run: echo "${{ inputs.do-api-token }}" | docker login ${{ inputs.registry }} -u unused --password-stdin

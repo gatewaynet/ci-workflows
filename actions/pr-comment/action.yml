@@ -1,0 +1,58 @@
+name: 'PR Comment (Upsert)'
+description: 'Create or update a PR comment, identified by a marker string for idempotent updates'
+
+inputs:
+  pr-number:
+    description: 'Pull request number'
+    required: true
+  marker:
+    description: 'Unique marker string to identify the comment for upsert (e.g. "Preview Image Ready")'
+    required: true
+  body:
+    description: 'Comment body (markdown)'
+    required: true
+  github-token:
+    description: 'GitHub token for API access'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Create or update PR comment
+      uses: actions/github-script@v7
+      env:
+        PR_NUMBER: ${{ inputs.pr-number }}
+        MARKER: ${{ inputs.marker }}
+        COMMENT_BODY: ${{ inputs.body }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const prNumber = parseInt(process.env.PR_NUMBER);
+          const marker = process.env.MARKER;
+          const body = process.env.COMMENT_BODY;
+
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: prNumber,
+          });
+
+          const existing = comments.find(c => c.body.includes(marker));
+
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body: body,
+            });
+            core.info(`Updated existing comment ${existing.id}`);
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: body,
+            });
+            core.info(`Created new comment on PR #${prNumber}`);
+          }

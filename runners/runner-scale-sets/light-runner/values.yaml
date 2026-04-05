@@ -1,0 +1,39 @@
+# Light Runner Scale Set
+# For: lint, typecheck, unit tests, small single-image Docker builds
+# Helm chart: oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
+
+githubConfigUrl: "https://github.com/gatewaynet"
+
+# Reference to K8s secret containing GitHub App credentials
+# Secret must contain: github_app_id, github_app_installation_id, github_app_private_key
+githubConfigSecret: github-arc-credentials
+
+# Runner labels - use in workflows with: runs-on: self-hosted-light
+runnerScaleSetName: self-hosted-light
+
+minRunners: 0
+maxRunners: 4
+
+# Ephemeral runners: clean state per job
+containerMode:
+  type: "kubernetes"
+  kubernetesModeWorkVolumeClaim:
+    accessModes: ["ReadWriteOnce"]
+    storageClassName: "do-block-storage"
+    resources:
+      requests:
+        storage: 20Gi
+
+template:
+  spec:
+    containers:
+      - name: runner
+        image: ghcr.io/actions/actions-runner:latest
+        command: ["/home/runner/run.sh"]
+        resources:
+          requests:
+            cpu: "1"
+            memory: 2Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi

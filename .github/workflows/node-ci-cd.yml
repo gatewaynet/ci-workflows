@@ -1,0 +1,540 @@
+name: Node.js CI/CD Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version'
+        required: true
+        type: string
+      image-name:
+        description: 'Docker image name (e.g. affiliate-frontend)'
+        required: true
+        type: string
+      registry:
+        description: 'Container registry URL'
+        required: false
+        type: string
+        default: 'registry.digitalocean.com/gatewaynet-service-repo'
+      argocd-app-name-develop:
+        description: 'ArgoCD app name for develop environment'
+        required: false
+        type: string
+        default: ''
+      argocd-app-name-production:
+        description: 'ArgoCD app name for production environment'
+        required: false
+        type: string
+        default: ''
+      argocd-resource-name:
+        description: 'Kubernetes deployment resource name to restart'
+        required: false
+        type: string
+        default: ''
+      run-lint:
+        description: 'Run linting'
+        required: false
+        type: boolean
+        default: true
+      lint-command:
+        description: 'Lint command'
+        required: false
+        type: string
+        default: 'npm run lint'
+      run-build:
+        description: 'Run build check'
+        required: false
+        type: boolean
+        default: false
+      build-command:
+        description: 'Build command'
+        required: false
+        type: string
+        default: 'npm run build'
+      run-tests:
+        description: 'Run tests'
+        required: false
+        type: boolean
+        default: false
+      test-command:
+        description: 'Test command'
+        required: false
+        type: string
+        default: 'npm test'
+      run-typecheck:
+        description: 'Run type checking'
+        required: false
+        type: boolean
+        default: false
+      typecheck-command:
+        description: 'Type check command'
+        required: false
+        type: string
+        default: 'npm run type-check'
+      run-audit:
+        description: 'Run security audit'
+        required: false
+        type: boolean
+        default: false
+      audit-command:
+        description: 'Security audit command'
+        required: false
+        type: string
+        default: 'npm run audit:security'
+      install-command:
+        description: 'Dependency install command'
+        required: false
+        type: string
+        default: 'npm ci'
+      dockerfile:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      docker-build-args:
+        description: 'Additional Docker build args (newline-separated)'
+        required: false
+        type: string
+        default: ''
+      enable-pr-preview:
+        description: 'Enable PR preview builds via BUILD_PREVIEW label/comment'
+        required: false
+        type: boolean
+        default: true
+      enable-release-verify:
+        description: 'Enable release build verification on PRs to production branch'
+        required: false
+        type: boolean
+        default: true
+      develop-branch:
+        description: 'Develop branch name'
+        required: false
+        type: string
+        default: 'develop'
+      production-branch:
+        description: 'Production branch name'
+        required: false
+        type: string
+        default: 'master'
+      check-runner:
+        description: 'Runner label for check jobs'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      build-runner:
+        description: 'Runner label for Docker build jobs'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+    secrets:
+      DO_API_TOKEN:
+        required: true
+      ARGOCD_AUTH_TOKEN:
+        required: false
+      ARGOCD_SERVER:
+        required: false
+
+jobs:
+  # ============================================
+  # STAGE 1: Check (Lint, Build, Test)
+  # ============================================
+  check:
+    name: Check
+    runs-on: ${{ inputs.check-runner }}
+    if: |
+      github.event.action != 'closed' &&
+      github.event_name != 'issue_comment'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install dependencies
+        run: ${{ inputs.install-command }}
+
+      - name: Security Audit
+        if: inputs.run-audit
+        run: ${{ inputs.audit-command }}
+
+      - name: Type Check
+        if: inputs.run-typecheck
+        run: ${{ inputs.typecheck-command }}
+
+      - name: Lint
+        if: inputs.run-lint
+        run: ${{ inputs.lint-command }}
+
+      - name: Build
+        if: inputs.run-build
+        run: ${{ inputs.build-command }}
+
+      - name: Test
+        if: inputs.run-tests
+        run: ${{ inputs.test-command }}
+
+  # ============================================
+  # STAGE 2a: PR Preview Build
+  # ============================================
+  pr-preview-build:
+    name: PR Preview Build
+    runs-on: ${{ inputs.build-runner }}
+    needs: [check]
+    if: |
+      always() &&
+      inputs.enable-pr-preview &&
+      (needs.check.result == 'success' || needs.check.result == 'skipped') &&
+      (
+        (github.event_name == 'pull_request' &&
+         github.event.action != 'closed' &&
+         contains(toJson(github.event.pull_request.labels.*.name), 'BUILD_PREVIEW')) ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         contains(github.event.comment.body, 'BUILD_PREVIEW'))
+      )
+    environment: develop
+    outputs:
+      pr_number: ${{ steps.pr_details.outputs.pr_number }}
+    steps:
+      - name: Get PR details
+        id: pr_details
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let prNumber, headRef, headSha;
+
+            if (context.eventName === 'issue_comment') {
+              prNumber = context.payload.issue.number;
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              headRef = pr.data.head.ref;
+              headSha = pr.data.head.sha;
+
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: 'rocket'
+              });
+            } else {
+              prNumber = context.payload.pull_request.number;
+              headRef = context.payload.pull_request.head.ref;
+              headSha = context.payload.pull_request.head.sha;
+            }
+
+            core.setOutput('pr_number', prNumber);
+            core.setOutput('head_ref', headRef);
+            core.setOutput('head_sha', headSha);
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr_details.outputs.head_sha }}
+
+      - name: Set up Node.js (for comment trigger)
+        if: github.event_name == 'issue_comment'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Run checks (for comment trigger)
+        if: github.event_name == 'issue_comment'
+        run: |
+          ${{ inputs.install-command }}
+          ${{ inputs.run-lint && inputs.lint-command || 'echo "lint skipped"' }}
+
+      - name: Login to Registry
+        uses: gatewaynet/ci-workflows/actions/do-registry-login@master
+        with:
+          do-api-token: ${{ secrets.DO_API_TOKEN }}
+          registry: ${{ inputs.registry }}
+
+      - name: Build and Push
+        uses: gatewaynet/ci-workflows/actions/docker-build-push@master
+        with:
+          registry: ${{ inputs.registry }}
+          image-name: ${{ inputs.image-name }}
+          version-tag: pr-${{ steps.pr_details.outputs.pr_number }}
+          commit-sha: ${{ steps.pr_details.outputs.head_sha }}
+          branch: ${{ steps.pr_details.outputs.head_ref }}
+          build-number: ${{ github.run_number }}
+          dockerfile: ${{ inputs.dockerfile }}
+          build-args: ${{ inputs.docker-build-args }}
+
+      - name: Comment PR
+        uses: gatewaynet/ci-workflows/actions/pr-comment@master
+        with:
+          pr-number: ${{ steps.pr_details.outputs.pr_number }}
+          marker: 'Preview Image Ready'
+          github-token: ${{ github.token }}
+          body: |
+            ## Preview Image Ready
+
+            **Image:** `${{ inputs.registry }}/${{ inputs.image-name }}:pr-${{ steps.pr_details.outputs.pr_number }}`
+            **Commit:** `${{ steps.pr_details.outputs.head_sha }}`
+
+            ```bash
+            docker pull ${{ inputs.registry }}/${{ inputs.image-name }}:pr-${{ steps.pr_details.outputs.pr_number }}
+            ```
+
+            _This image will be cleaned up when the PR is closed._
+
+  # ============================================
+  # STAGE 2b: ArgoCD Deploy Preview
+  # ============================================
+  argocd-deploy-preview:
+    name: ArgoCD Restart Preview
+    runs-on: ubuntu-latest
+    needs: [pr-preview-build]
+    if: |
+      needs.pr-preview-build.result == 'success' &&
+      inputs.argocd-app-name-develop != '' &&
+      inputs.argocd-resource-name != ''
+    environment: develop
+    continue-on-error: true
+    steps:
+      - name: Restart Deployment
+        uses: gatewaynet/ci-workflows/actions/argocd-restart@master
+        with:
+          app-name: ${{ inputs.argocd-app-name-develop }}
+          resource-name: ${{ inputs.argocd-resource-name }}
+          argocd-server: ${{ secrets.ARGOCD_SERVER }}
+          argocd-auth-token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+
+  # ============================================
+  # STAGE 3a: Develop Build
+  # ============================================
+  develop-build:
+    name: Build Develop
+    runs-on: ${{ inputs.build-runner }}
+    needs: check
+    if: |
+      always() &&
+      needs.check.result == 'success' &&
+      github.event_name == 'push' &&
+      github.ref == format('refs/heads/{0}', inputs.develop-branch)
+    environment: develop
+    outputs:
+      version_tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Version Tag
+        id: version
+        uses: gatewaynet/ci-workflows/actions/version-tag@master
+        with:
+          environment: develop
+
+      - name: Login to Registry
+        uses: gatewaynet/ci-workflows/actions/do-registry-login@master
+        with:
+          do-api-token: ${{ secrets.DO_API_TOKEN }}
+          registry: ${{ inputs.registry }}
+
+      - name: Build and Push
+        uses: gatewaynet/ci-workflows/actions/docker-build-push@master
+        with:
+          registry: ${{ inputs.registry }}
+          image-name: ${{ inputs.image-name }}
+          version-tag: ${{ steps.version.outputs.tag }}
+          extra-tags: dev-latest,develop-build-${{ github.run_number }}
+          commit-sha: ${{ github.sha }}
+          branch: ${{ inputs.develop-branch }}
+          build-number: ${{ github.run_number }}
+          dockerfile: ${{ inputs.dockerfile }}
+          build-args: ${{ inputs.docker-build-args }}
+
+      - name: Build summary
+        run: |
+          echo "### Develop Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- Version: \`${{ steps.version.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Aliases: \`dev-latest\`, \`develop-build-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # STAGE 3b: ArgoCD Deploy Develop
+  # ============================================
+  argocd-deploy-develop:
+    name: ArgoCD Restart Develop
+    runs-on: ubuntu-latest
+    needs: [develop-build]
+    if: |
+      needs.develop-build.result == 'success' &&
+      inputs.argocd-app-name-develop != '' &&
+      inputs.argocd-resource-name != ''
+    environment: develop
+    continue-on-error: true
+    steps:
+      - name: Restart Deployment
+        uses: gatewaynet/ci-workflows/actions/argocd-restart@master
+        with:
+          app-name: ${{ inputs.argocd-app-name-develop }}
+          resource-name: ${{ inputs.argocd-resource-name }}
+          argocd-server: ${{ secrets.ARGOCD_SERVER }}
+          argocd-auth-token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+
+  # ============================================
+  # STAGE 4a: Release Build Verification
+  # ============================================
+  release-build-verify:
+    name: Verify Release Build
+    runs-on: ${{ inputs.build-runner }}
+    needs: check
+    if: |
+      inputs.enable-release-verify &&
+      needs.check.result == 'success' &&
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      github.base_ref == inputs.production-branch
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract release version
+        id: release_info
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          VERSION=$(echo "$BRANCH" | grep -oP 'v\K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          if [ -z "$VERSION" ]; then
+            echo "VERSION=unknown" >> $GITHUB_OUTPUT
+            echo "VERSION_TAG=release-verify-pr${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "VERSION_TAG=v${VERSION}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Docker Image (verify only)
+        uses: gatewaynet/ci-workflows/actions/docker-build-push@master
+        with:
+          registry: ${{ inputs.registry }}
+          image-name: ${{ inputs.image-name }}
+          version-tag: ${{ steps.release_info.outputs.VERSION_TAG }}
+          commit-sha: ${{ github.event.pull_request.head.sha }}
+          branch: ${{ github.event.pull_request.head.ref }}
+          build-number: ${{ github.run_number }}
+          dockerfile: ${{ inputs.dockerfile }}
+          build-args: ${{ inputs.docker-build-args }}
+          push: 'false'
+
+      - name: Comment PR with release info
+        uses: gatewaynet/ci-workflows/actions/pr-comment@master
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          marker: 'Release Build Verified'
+          github-token: ${{ github.token }}
+          body: |
+            ## Release Build Verified
+
+            | Detail | Value |
+            |--------|-------|
+            | Branch | `${{ github.event.pull_request.head.ref }}` |
+            | Version | `${{ steps.release_info.outputs.VERSION }}` |
+            | Docker Image | `${{ inputs.registry }}/${{ inputs.image-name }}:${{ steps.release_info.outputs.VERSION_TAG }}` |
+
+            > Docker build passed. On merge, the production image will be built and pushed.
+
+  # ============================================
+  # STAGE 5a: Production Build
+  # ============================================
+  production-build:
+    name: Build Production
+    runs-on: ${{ inputs.build-runner }}
+    needs: check
+    if: |
+      always() &&
+      needs.check.result == 'success' &&
+      github.event_name == 'push' &&
+      github.ref == format('refs/heads/{0}', inputs.production-branch)
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Version Tag
+        id: version
+        uses: gatewaynet/ci-workflows/actions/version-tag@master
+        with:
+          environment: production
+
+      - name: Login to Registry
+        uses: gatewaynet/ci-workflows/actions/do-registry-login@master
+        with:
+          do-api-token: ${{ secrets.DO_API_TOKEN }}
+          registry: ${{ inputs.registry }}
+
+      - name: Build and Push
+        uses: gatewaynet/ci-workflows/actions/docker-build-push@master
+        with:
+          registry: ${{ inputs.registry }}
+          image-name: ${{ inputs.image-name }}
+          version-tag: ${{ steps.version.outputs.tag }}
+          extra-tags: production-latest,latest
+          commit-sha: ${{ github.sha }}
+          branch: ${{ inputs.production-branch }}
+          build-number: ${{ github.run_number }}
+          dockerfile: ${{ inputs.dockerfile }}
+          build-args: ${{ inputs.docker-build-args }}
+
+      - name: Build summary
+        run: |
+          echo "### Production Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- Version: \`${{ steps.version.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Aliases: \`production-latest\`, \`latest\`" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # STAGE 5b: ArgoCD Deploy Production
+  # ============================================
+  argocd-deploy-production:
+    name: ArgoCD Restart Production
+    runs-on: ubuntu-latest
+    needs: [production-build]
+    if: |
+      needs.production-build.result == 'success' &&
+      inputs.argocd-app-name-production != '' &&
+      inputs.argocd-resource-name != ''
+    environment: production
+    continue-on-error: true
+    steps:
+      - name: Restart Deployment
+        uses: gatewaynet/ci-workflows/actions/argocd-restart@master
+        with:
+          app-name: ${{ inputs.argocd-app-name-production }}
+          resource-name: ${{ inputs.argocd-resource-name }}
+          argocd-server: ${{ secrets.ARGOCD_SERVER }}
+          argocd-auth-token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+
+  # ============================================
+  # STAGE 6: PR Cleanup
+  # ============================================
+  pr-cleanup:
+    name: PR Cleanup
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed'
+    environment: develop
+    steps:
+      - name: Login to Registry
+        uses: gatewaynet/ci-workflows/actions/do-registry-login@master
+        with:
+          do-api-token: ${{ secrets.DO_API_TOKEN }}
+          registry: ${{ inputs.registry }}
+
+      - name: Cleanup PR Preview Image
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          IMAGE_TAG="pr-${PR_NUMBER}"
+
+          if doctl registry repository delete-manifest ${{ inputs.image-name }} ${IMAGE_TAG} --force 2>/dev/null; then
+            echo "### PR Image Cleanup" >> $GITHUB_STEP_SUMMARY
+            echo "Deleted: \`${{ inputs.image-name }}:${IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### PR Image Cleanup" >> $GITHUB_STEP_SUMMARY
+            echo "Image \`${IMAGE_TAG}\` not found (may not have been built)" >> $GITHUB_STEP_SUMMARY
+          fi

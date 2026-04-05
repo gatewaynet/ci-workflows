@@ -1,0 +1,58 @@
+name: PR Image Cleanup
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: 'Docker image name to clean up'
+        required: true
+        type: string
+      image-names:
+        description: 'Comma-separated image names for multi-image projects (overrides image-name)'
+        required: false
+        type: string
+        default: ''
+      registry:
+        description: 'Container registry URL'
+        required: false
+        type: string
+        default: 'registry.digitalocean.com/gatewaynet-service-repo'
+    secrets:
+      DO_API_TOKEN:
+        required: true
+
+jobs:
+  cleanup:
+    name: Cleanup PR Images
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    environment: develop
+    steps:
+      - name: Login to Registry
+        uses: gatewaynet/ci-workflows/actions/do-registry-login@master
+        with:
+          do-api-token: ${{ secrets.DO_API_TOKEN }}
+          registry: ${{ inputs.registry }}
+
+      - name: Cleanup PR images
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          IMAGE_TAG="pr-${PR_NUMBER}"
+
+          # Build list of images to clean
+          if [ -n "${{ inputs.image-names }}" ]; then
+            IFS=',' read -ra IMAGES <<< "${{ inputs.image-names }}"
+          else
+            IMAGES=("${{ inputs.image-name }}")
+          fi
+
+          for image in "${IMAGES[@]}"; do
+            image=$(echo "$image" | xargs)
+            if [ -n "$image" ]; then
+              if doctl registry repository delete-manifest "${image}" "${IMAGE_TAG}" --force 2>/dev/null; then
+                echo "Deleted: ${image}:${IMAGE_TAG}"
+              else
+                echo "Not found: ${image}:${IMAGE_TAG}"
+              fi
+            fi
+          done
