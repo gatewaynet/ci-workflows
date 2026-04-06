@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       image-name:
-        description: 'Docker image name (e.g. affiliate-frontend)'
+        description: 'Docker image name (e.g. bonus-engine)'
         required: true
         type: string
       registry:
@@ -16,21 +16,6 @@ on:
         required: false
         type: string
         default: 'registry.digitalocean.com/gatewaynet-service-repo'
-      argocd-app-name-develop:
-        description: 'ArgoCD app name for develop environment'
-        required: false
-        type: string
-        default: ''
-      argocd-app-name-production:
-        description: 'ArgoCD app name for production environment'
-        required: false
-        type: string
-        default: ''
-      argocd-resource-name:
-        description: 'Kubernetes deployment resource name to restart'
-        required: false
-        type: string
-        default: ''
       run-lint:
         description: 'Run linting'
         required: false
@@ -96,11 +81,11 @@ on:
         required: false
         type: string
         default: ''
-      enable-pr-preview:
-        description: 'Enable PR preview builds via BUILD_PREVIEW label/comment'
+      pr-preview-mode:
+        description: 'PR preview trigger: "label" (BUILD_PREVIEW label/comment), "auto" (every PR to develop), "disabled"'
         required: false
-        type: boolean
-        default: true
+        type: string
+        default: 'label'
       enable-release-verify:
         description: 'Enable release build verification on PRs to production branch'
         required: false
@@ -129,10 +114,16 @@ on:
     secrets:
       DO_API_TOKEN:
         required: true
-      ARGOCD_AUTH_TOKEN:
-        required: false
-      ARGOCD_SERVER:
-        required: false
+    outputs:
+      develop-version:
+        description: 'Version tag from develop build (e.g. dev-v1.0.5)'
+        value: ${{ jobs.develop-build.outputs.version_tag }}
+      production-version:
+        description: 'Version tag from production build (e.g. v1.0.0)'
+        value: ${{ jobs.production-build.outputs.version_tag }}
+      pr-number:
+        description: 'PR number from preview build'
+        value: ${{ jobs.pr-preview-build.outputs.pr_number }}
 
 jobs:
   # ============================================
@@ -151,6 +142,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
+          cache: 'npm'
 
       - name: Install dependencies
         run: ${{ inputs.install-command }}
@@ -176,7 +168,9 @@ jobs:
         run: ${{ inputs.test-command }}
 
   # ============================================
-  # STAGE 2a: PR Preview Build
+  # STAGE 2: PR Preview Build
+  # Mode "label": triggered by BUILD_PREVIEW label or comment
+  # Mode "auto": triggered on every PR to develop
   # ============================================
   pr-preview-build:
     name: PR Preview Build
@@ -184,13 +178,19 @@ jobs:
     needs: [check]
     if: |
       always() &&
-      inputs.enable-pr-preview &&
+      inputs.pr-preview-mode != 'disabled' &&
       (needs.check.result == 'success' || needs.check.result == 'skipped') &&
       (
-        (github.event_name == 'pull_request' &&
+        (inputs.pr-preview-mode == 'auto' &&
+         github.event_name == 'pull_request' &&
+         github.event.action != 'closed' &&
+         github.base_ref == inputs.develop-branch) ||
+        (inputs.pr-preview-mode == 'label' &&
+         github.event_name == 'pull_request' &&
          github.event.action != 'closed' &&
          contains(toJson(github.event.pull_request.labels.*.name), 'BUILD_PREVIEW')) ||
-        (github.event_name == 'issue_comment' &&
+        (inputs.pr-preview-mode == 'label' &&
+         github.event_name == 'issue_comment' &&
          github.event.issue.pull_request &&
          contains(github.event.comment.body, 'BUILD_PREVIEW'))
       )
@@ -245,7 +245,7 @@ jobs:
         if: github.event_name == 'issue_comment'
         run: |
           ${{ inputs.install-command }}
-          ${{ inputs.run-lint && inputs.lint-command || 'echo "lint skipped"' }}
+          ${{ inputs.lint-command }}
 
       - name: Login to Registry
         uses: gatewaynet/ci-workflows/actions/do-registry-login@master
@@ -274,39 +274,18 @@ jobs:
           body: |
             ## Preview Image Ready
 
-            **Image:** `${{ inputs.registry }}/${{ inputs.image-name }}:pr-${{ steps.pr_details.outputs.pr_number }}`
-            **Commit:** `${{ steps.pr_details.outputs.head_sha }}`
+            | Image | Tag |
+            |-------|-----|
+            | ${{ inputs.image-name }} | `pr-${{ steps.pr_details.outputs.pr_number }}` |
 
-            ```bash
-            docker pull ${{ inputs.registry }}/${{ inputs.image-name }}:pr-${{ steps.pr_details.outputs.pr_number }}
+            ```
+            ${{ inputs.registry }}/${{ inputs.image-name }}:pr-${{ steps.pr_details.outputs.pr_number }}
             ```
 
             _This image will be cleaned up when the PR is closed._
 
   # ============================================
-  # STAGE 2b: ArgoCD Deploy Preview
-  # ============================================
-  argocd-deploy-preview:
-    name: ArgoCD Restart Preview
-    runs-on: ubuntu-latest
-    needs: [pr-preview-build]
-    if: |
-      needs.pr-preview-build.result == 'success' &&
-      inputs.argocd-app-name-develop != '' &&
-      inputs.argocd-resource-name != ''
-    environment: develop
-    continue-on-error: true
-    steps:
-      - name: Restart Deployment
-        uses: gatewaynet/ci-workflows/actions/argocd-restart@master
-        with:
-          app-name: ${{ inputs.argocd-app-name-develop }}
-          resource-name: ${{ inputs.argocd-resource-name }}
-          argocd-server: ${{ secrets.ARGOCD_SERVER }}
-          argocd-auth-token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
-
-  # ============================================
-  # STAGE 3a: Develop Build
+  # STAGE 3: Develop Build
   # ============================================
   develop-build:
     name: Build Develop
@@ -357,29 +336,7 @@ jobs:
           echo "- Aliases: \`dev-latest\`, \`develop-build-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
 
   # ============================================
-  # STAGE 3b: ArgoCD Deploy Develop
-  # ============================================
-  argocd-deploy-develop:
-    name: ArgoCD Restart Develop
-    runs-on: ubuntu-latest
-    needs: [develop-build]
-    if: |
-      needs.develop-build.result == 'success' &&
-      inputs.argocd-app-name-develop != '' &&
-      inputs.argocd-resource-name != ''
-    environment: develop
-    continue-on-error: true
-    steps:
-      - name: Restart Deployment
-        uses: gatewaynet/ci-workflows/actions/argocd-restart@master
-        with:
-          app-name: ${{ inputs.argocd-app-name-develop }}
-          resource-name: ${{ inputs.argocd-resource-name }}
-          argocd-server: ${{ secrets.ARGOCD_SERVER }}
-          argocd-auth-token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
-
-  # ============================================
-  # STAGE 4a: Release Build Verification
+  # STAGE 4: Release Build Verification
   # ============================================
   release-build-verify:
     name: Verify Release Build
@@ -439,7 +396,7 @@ jobs:
             > Docker build passed. On merge, the production image will be built and pushed.
 
   # ============================================
-  # STAGE 5a: Production Build
+  # STAGE 5: Production Build
   # ============================================
   production-build:
     name: Build Production
@@ -451,6 +408,8 @@ jobs:
       github.event_name == 'push' &&
       github.ref == format('refs/heads/{0}', inputs.production-branch)
     environment: production
+    outputs:
+      version_tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -486,28 +445,6 @@ jobs:
           echo "### Production Build Complete" >> $GITHUB_STEP_SUMMARY
           echo "- Version: \`${{ steps.version.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Aliases: \`production-latest\`, \`latest\`" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # STAGE 5b: ArgoCD Deploy Production
-  # ============================================
-  argocd-deploy-production:
-    name: ArgoCD Restart Production
-    runs-on: ubuntu-latest
-    needs: [production-build]
-    if: |
-      needs.production-build.result == 'success' &&
-      inputs.argocd-app-name-production != '' &&
-      inputs.argocd-resource-name != ''
-    environment: production
-    continue-on-error: true
-    steps:
-      - name: Restart Deployment
-        uses: gatewaynet/ci-workflows/actions/argocd-restart@master
-        with:
-          app-name: ${{ inputs.argocd-app-name-production }}
-          resource-name: ${{ inputs.argocd-resource-name }}
-          argocd-server: ${{ secrets.ARGOCD_SERVER }}
-          argocd-auth-token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
 
   # ============================================
   # STAGE 6: PR Cleanup
