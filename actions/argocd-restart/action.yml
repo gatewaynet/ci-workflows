@@ -1,5 +1,5 @@
 name: 'ArgoCD Restart Deployment'
-description: 'Restart ArgoCD-managed deployment(s) after a new image is pushed'
+description: 'Sync and/or restart ArgoCD-managed deployment(s) after a new image is pushed'
 
 inputs:
   app-name:
@@ -18,6 +18,10 @@ inputs:
     description: 'Kubernetes resource kind'
     required: false
     default: 'Deployment'
+  sync-force:
+    description: 'Run argocd app sync --force before restart (triggers pre-sync hooks like migrations)'
+    required: false
+    default: 'true'
 
 runs:
   using: 'composite'
@@ -27,6 +31,19 @@ runs:
       run: |
         curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
         chmod +x /usr/local/bin/argocd
+
+    - name: Sync (force)
+      if: inputs.sync-force == 'true'
+      shell: bash
+      run: |
+        APP="${{ inputs.app-name }}"
+        ARGOCD_OPTS="--server ${{ inputs.argocd-server }} --auth-token ${{ inputs.argocd-auth-token }} --grpc-web --insecure"
+
+        echo "Syncing ${APP} with --force..."
+        argocd app sync "${APP}" --force ${ARGOCD_OPTS}
+
+        echo "### ArgoCD Sync — ${APP}" >> $GITHUB_STEP_SUMMARY
+        echo "Forced sync triggered (pre-sync hooks will run)" >> $GITHUB_STEP_SUMMARY
 
     - name: Restart Deployment(s)
       shell: bash
@@ -40,11 +57,9 @@ runs:
         ARGOCD_OPTS="--server ${SERVER} --auth-token ${TOKEN} --grpc-web --insecure"
 
         if [ "${RESOURCE_INPUT}" = "all" ]; then
-          # Query ArgoCD for all deployments in the app
           RESOURCES=$(argocd app resources "${APP}" ${ARGOCD_OPTS} --output json \
             | jq -r ".[] | select(.kind==\"${KIND}\") | .name")
         else
-          # Split comma-separated list
           RESOURCES=$(echo "${RESOURCE_INPUT}" | tr ',' '\n' | sed 's/^ *//;s/ *$//')
         fi
 
