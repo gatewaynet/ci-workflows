@@ -1,12 +1,12 @@
 name: 'ArgoCD Restart Deployment'
-description: 'Restart an ArgoCD-managed deployment after a new image is pushed'
+description: 'Restart ArgoCD-managed deployment(s) after a new image is pushed'
 
 inputs:
   app-name:
     description: 'ArgoCD application name'
     required: true
   resource-name:
-    description: 'Kubernetes deployment resource name to restart'
+    description: 'Kubernetes deployment name(s) - comma-separated for multiple, or "all" to restart all deployments'
     required: true
   argocd-server:
     description: 'ArgoCD server hostname (e.g. argocd.example.com)'
@@ -28,18 +28,52 @@ runs:
         curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
         chmod +x /usr/local/bin/argocd
 
-    - name: Restart Deployment
+    - name: Restart Deployment(s)
       shell: bash
       run: |
-        echo "Restarting ${{ inputs.kind }} ${{ inputs.resource-name }} in ${{ inputs.app-name }}..."
+        APP="${{ inputs.app-name }}"
+        SERVER="${{ inputs.argocd-server }}"
+        TOKEN="${{ inputs.argocd-auth-token }}"
+        KIND="${{ inputs.kind }}"
+        RESOURCE_INPUT="${{ inputs.resource-name }}"
 
-        argocd app actions run ${{ inputs.app-name }} restart \
-          --kind ${{ inputs.kind }} \
-          --resource-name ${{ inputs.resource-name }} \
-          --server ${{ inputs.argocd-server }} \
-          --auth-token ${{ inputs.argocd-auth-token }} \
-          --grpc-web \
-          --insecure
+        ARGOCD_OPTS="--server ${SERVER} --auth-token ${TOKEN} --grpc-web --insecure"
 
-        echo "### ArgoCD Restart Triggered" >> $GITHUB_STEP_SUMMARY
-        echo "App: \`${{ inputs.app-name }}\` | Resource: \`${{ inputs.resource-name }}\`" >> $GITHUB_STEP_SUMMARY
+        if [ "${RESOURCE_INPUT}" = "all" ]; then
+          # Query ArgoCD for all deployments in the app
+          RESOURCES=$(argocd app resources "${APP}" ${ARGOCD_OPTS} --output json \
+            | jq -r ".[] | select(.kind==\"${KIND}\") | .name")
+        else
+          # Split comma-separated list
+          RESOURCES=$(echo "${RESOURCE_INPUT}" | tr ',' '\n' | sed 's/^ *//;s/ *$//')
+        fi
+
+        if [ -z "${RESOURCES}" ]; then
+          echo "No ${KIND} resources found in ${APP}"
+          echo "### ArgoCD Restart — No resources found" >> $GITHUB_STEP_SUMMARY
+          exit 0
+        fi
+
+        RESTARTED=""
+        FAILED=""
+
+        for RESOURCE in ${RESOURCES}; do
+          echo "Restarting ${KIND} ${RESOURCE} in ${APP}..."
+          if argocd app actions run "${APP}" restart \
+            --kind "${KIND}" \
+            --resource-name "${RESOURCE}" \
+            ${ARGOCD_OPTS} 2>&1; then
+            RESTARTED="${RESTARTED}\n- \`${RESOURCE}\`"
+          else
+            echo "Failed to restart ${RESOURCE}"
+            FAILED="${FAILED}\n- \`${RESOURCE}\`"
+          fi
+        done
+
+        echo "### ArgoCD Restart — ${APP}" >> $GITHUB_STEP_SUMMARY
+        if [ -n "${RESTARTED}" ]; then
+          echo -e "Restarted:${RESTARTED}" >> $GITHUB_STEP_SUMMARY
+        fi
+        if [ -n "${FAILED}" ]; then
+          echo -e "Failed:${FAILED}" >> $GITHUB_STEP_SUMMARY
+        fi
