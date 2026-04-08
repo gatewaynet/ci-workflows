@@ -1,5 +1,5 @@
 name: 'Version Tag'
-description: 'Generate and push auto-incrementing version tags (dev-vX.Y.Z, vX.Y.Z, pr-N)'
+description: 'Generate and optionally push auto-incrementing version tags (dev-vX.Y.Z, vX.Y.Z, pr-N)'
 
 inputs:
   environment:
@@ -13,6 +13,10 @@ inputs:
     description: 'Tag prefix for monorepo per-service tags (e.g. game-engine-auth)'
     required: false
     default: ''
+  push-tag:
+    description: 'Push the git tag to origin (set to false to only generate the tag name)'
+    required: false
+    default: 'true'
 
 outputs:
   tag:
@@ -40,15 +44,11 @@ runs:
             ;;
 
           develop)
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-
             LATEST_TAG=$(git tag -l "${PREFIX_SLASH}dev-v*.*.*" | sort -V | tail -n1)
 
             if [ -z "$LATEST_TAG" ]; then
               NEW_TAG="${PREFIX_SLASH}dev-v1.0.0"
             else
-              # Strip prefix if present
               VERSION_PART="${LATEST_TAG#${PREFIX_SLASH}dev-v}"
               MAJOR=$(echo "$VERSION_PART" | cut -d. -f1)
               MINOR=$(echo "$VERSION_PART" | cut -d. -f2)
@@ -60,17 +60,17 @@ runs:
             echo "Previous tag: $LATEST_TAG"
             echo "New tag: $NEW_TAG"
 
-            git tag -a "$NEW_TAG" -m "Auto-generated dev tag"
-            git push origin "$NEW_TAG"
+            if [ "${{ inputs.push-tag }}" = "true" ]; then
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git tag -a "$NEW_TAG" -m "Auto-generated dev tag"
+              git push origin "$NEW_TAG"
+            fi
 
-            # Output the tag without prefix for Docker image tagging
             echo "tag=${NEW_TAG#${PREFIX_SLASH}}" >> "$GITHUB_OUTPUT"
             ;;
 
           production)
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-
             COMMIT_MSG=$(git log -1 --pretty=%B)
             echo "Commit message: $COMMIT_MSG"
 
@@ -78,7 +78,6 @@ runs:
             VERSION=$(echo "$COMMIT_MSG" | grep -oP '(release/v|Release v|^v)\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 
             if [ -z "$VERSION" ]; then
-              # Fallback: read from package.json (Node.js) or go.mod version
               if [ -f "package.json" ]; then
                 VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "")
               fi
@@ -92,12 +91,16 @@ runs:
             VERSION_TAG="${PREFIX_SLASH}v${VERSION}"
             echo "Production release version: $VERSION_TAG"
 
-            if git rev-parse "$VERSION_TAG" >/dev/null 2>&1; then
-              echo "Tag $VERSION_TAG already exists, reusing it"
-            else
-              git tag -a "$VERSION_TAG" -m "Production release $VERSION_TAG"
-              git push origin "$VERSION_TAG"
-              echo "Created production tag: $VERSION_TAG"
+            if [ "${{ inputs.push-tag }}" = "true" ]; then
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              if git rev-parse "$VERSION_TAG" >/dev/null 2>&1; then
+                echo "Tag $VERSION_TAG already exists, reusing it"
+              else
+                git tag -a "$VERSION_TAG" -m "Production release $VERSION_TAG"
+                git push origin "$VERSION_TAG"
+                echo "Created production tag: $VERSION_TAG"
+              fi
             fi
 
             echo "tag=${VERSION_TAG#${PREFIX_SLASH}}" >> "$GITHUB_OUTPUT"

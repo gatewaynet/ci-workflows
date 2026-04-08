@@ -309,6 +309,7 @@ jobs:
         uses: gatewaynet/ci-workflows/actions/version-tag@master
         with:
           environment: develop
+          push-tag: 'false'
 
       - name: Login to Registry
         uses: gatewaynet/ci-workflows/actions/do-registry-login@master
@@ -334,6 +335,26 @@ jobs:
           echo "### Develop Build Complete" >> $GITHUB_STEP_SUMMARY
           echo "- Version: \`${{ steps.version.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Aliases: \`dev-latest\`, \`develop-build-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # STAGE 3b: Develop Tag (post-build)
+  # Always runs on GitHub-hosted runner
+  # ============================================
+  develop-tag:
+    name: Tag Develop
+    runs-on: ubuntu-latest
+    needs: develop-build
+    if: needs.develop-build.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push Version Tag
+        uses: gatewaynet/ci-workflows/actions/version-tag@master
+        with:
+          environment: develop
+          push-tag: 'true'
 
   # ============================================
   # STAGE 4: Release Build Verification
@@ -420,6 +441,7 @@ jobs:
         uses: gatewaynet/ci-workflows/actions/version-tag@master
         with:
           environment: production
+          push-tag: 'false'
 
       - name: Login to Registry
         uses: gatewaynet/ci-workflows/actions/do-registry-login@master
@@ -445,6 +467,26 @@ jobs:
           echo "### Production Build Complete" >> $GITHUB_STEP_SUMMARY
           echo "- Version: \`${{ steps.version.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Aliases: \`production-latest\`, \`latest\`" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # STAGE 5b: Production Tag (post-build)
+  # Always runs on GitHub-hosted runner
+  # ============================================
+  production-tag:
+    name: Tag Production
+    runs-on: ubuntu-latest
+    needs: production-build
+    if: needs.production-build.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push Version Tag
+        uses: gatewaynet/ci-workflows/actions/version-tag@master
+        with:
+          environment: production
+          push-tag: 'true'
 
   # ============================================
   # STAGE 6: PR Cleanup
