@@ -57,8 +57,8 @@ runs:
         ARGOCD_OPTS="--server ${SERVER} --auth-token ${TOKEN} --grpc-web --insecure"
 
         if [ "${RESOURCE_INPUT}" = "all" ]; then
-          RESOURCES=$(argocd app resources "${APP}" ${ARGOCD_OPTS} --output json \
-            | jq -r ".[] | select(.kind==\"${KIND}\") | .name")
+          RESOURCES=$(argocd app resources "${APP}" ${ARGOCD_OPTS} \
+            | awk -v kind="${KIND}" '$2 == kind {print $3}')
         else
           RESOURCES=$(echo "${RESOURCE_INPUT}" | tr ',' '\n' | sed 's/^ *//;s/ *$//')
         fi
