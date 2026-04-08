@@ -138,11 +138,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check for lockfile
+        id: lockfile
+        run: test -f package-lock.json && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
-          cache: 'npm'
+          cache: ${{ steps.lockfile.outputs.exists == 'true' && 'npm' || '' }}
 
       - name: Install dependencies
         run: ${{ inputs.install-command }}
