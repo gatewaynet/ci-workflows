@@ -113,7 +113,7 @@ on:
         default: 'ubuntu-latest'
     secrets:
       DO_API_TOKEN:
-        required: true
+        required: false
     outputs:
       develop-version:
         description: 'Version tag from develop build (e.g. dev-v1.0.5)'
