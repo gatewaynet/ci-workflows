@@ -183,8 +183,6 @@ jobs:
     if: |
       always() &&
       inputs.pr-preview-mode != 'disabled' &&
-      !contains(github.event.head_commit.message, '[NOBUILD]') &&
-      !contains(github.event.pull_request.title, '[NOBUILD]') &&
       (needs.check.result == 'success' || needs.check.result == 'skipped') &&
       (
         (inputs.pr-preview-mode == 'auto' &&
@@ -373,7 +371,6 @@ jobs:
     if: |
       inputs.enable-release-verify &&
       needs.check.result == 'success' &&
-      !contains(github.event.pull_request.title, '[NOBUILD]') &&
       github.event_name == 'pull_request' &&
       github.event.action != 'closed' &&
       github.base_ref == inputs.production-branch
@@ -434,7 +431,6 @@ jobs:
     if: |
       always() &&
       needs.check.result == 'success' &&
-      !contains(github.event.head_commit.message, '[NOBUILD]') &&
       github.event_name == 'push' &&
       github.ref == format('refs/heads/{0}', inputs.production-branch)
     environment: production

@@ -73,11 +73,14 @@ Full CI/CD pipeline for Node.js projects. Handles the entire lifecycle:
 | **ArgoCD Restart** | After each build | Restarts deployment (if configured) |
 | **PR Cleanup** | PR closed | Deletes preview image from registry |
 
-### Skip Docker Builds with `[NOBUILD]`
+### Skip Develop Build with `[NOBUILD]`
 
-Add `[NOBUILD]` (case-insensitive) to a commit message or PR title/body to skip
-all Docker build stages. The `check` job (lint, typecheck, test) still runs,
-but no image will be built, tagged, or pushed.
+Add `[NOBUILD]` to a commit message on the develop branch to skip the Docker
+build stage. The `check` job (lint, typecheck, test) still runs, but no image
+will be built, tagged, or pushed.
+
+**Scope:** Only applies to develop builds. PR previews, release verify, and
+production builds are not affected.
 
 Use this for changes that don't require a new image:
 - Documentation updates (`README.md`, `docs/`)
@@ -89,8 +92,8 @@ Use this for changes that don't require a new image:
 git commit -m "docs: update API examples [NOBUILD]"
 git push origin develop
 
-# In a PR title
-[NOBUILD] Fix typo in README
+# Via squash-merged PR — put [NOBUILD] in the PR title
+# (squash commit uses PR title as message)
 ```
 
 **Key inputs:**
