@@ -337,9 +337,12 @@ jobs:
 
       - name: Build summary
         run: |
+          IMAGE="${{ inputs.registry }}/${{ inputs.image-name }}"
           echo "### Develop Build Complete" >> $GITHUB_STEP_SUMMARY
-          echo "- Version: \`${{ steps.version.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Aliases: \`dev-latest\`, \`develop-build-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Image: \`${IMAGE}:${{ steps.version.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Aliases:" >> $GITHUB_STEP_SUMMARY
+          echo "  - \`${IMAGE}:dev-latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "  - \`${IMAGE}:develop-build-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
 
   # ============================================
   # STAGE 3b: Develop Tag (post-build)
@@ -469,9 +472,12 @@ jobs:
 
       - name: Build summary
         run: |
+          IMAGE="${{ inputs.registry }}/${{ inputs.image-name }}"
           echo "### Production Build Complete" >> $GITHUB_STEP_SUMMARY
-          echo "- Version: \`${{ steps.version.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Aliases: \`production-latest\`, \`latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Image: \`${IMAGE}:${{ steps.version.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Aliases:" >> $GITHUB_STEP_SUMMARY
+          echo "  - \`${IMAGE}:production-latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "  - \`${IMAGE}:latest\`" >> $GITHUB_STEP_SUMMARY
 
   # ============================================
   # STAGE 5b: Production Tag (post-build)
