@@ -142,15 +142,14 @@ jobs:
     steps:
       - name: Check for NOBUILD marker
         id: check
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          MSG=""
-          if [ "${{ github.event_name }}" = "push" ]; then
-            MSG="${{ github.event.head_commit.message }}"
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            MSG="${{ github.event.pull_request.title }} ${{ github.event.pull_request.body }}"
-          fi
+          MSG="${COMMIT_MSG}${PR_TITLE}${PR_BODY}"
 
-          if echo "$MSG" | grep -qi "\[NOBUILD\]"; then
+          if printf '%s' "$MSG" | grep -qi "\[NOBUILD\]"; then
             echo "skip=true" >> $GITHUB_OUTPUT
             echo "### Build Skipped" >> $GITHUB_STEP_SUMMARY
             echo "[NOBUILD] marker found — Docker build stages will be skipped." >> $GITHUB_STEP_SUMMARY
