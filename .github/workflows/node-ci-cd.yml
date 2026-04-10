@@ -127,37 +127,6 @@ on:
 
 jobs:
   # ============================================
-  # STAGE 0: Detect build skip
-  # Checks commit message / PR title for [NOBUILD] to skip Docker builds
-  # Check job still runs (lint/test always execute)
-  # ============================================
-  detect-build-skip:
-    name: Detect Build Skip
-    runs-on: ubuntu-latest
-    if: |
-      github.event.action != 'closed' &&
-      github.event_name != 'issue_comment'
-    outputs:
-      skip: ${{ steps.check.outputs.skip }}
-    steps:
-      - name: Check for NOBUILD marker
-        id: check
-        env:
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          MSG="${COMMIT_MSG}${PR_TITLE}${PR_BODY}"
-
-          if printf '%s' "$MSG" | grep -qi "\[NOBUILD\]"; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "### Build Skipped" >> $GITHUB_STEP_SUMMARY
-            echo "[NOBUILD] marker found — Docker build stages will be skipped." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
-
-  # ============================================
   # STAGE 1: Check (Lint, Build, Test)
   # ============================================
   check:
@@ -210,11 +179,12 @@ jobs:
   pr-preview-build:
     name: PR Preview Build
     runs-on: ${{ inputs.build-runner }}
-    needs: [check, detect-build-skip]
+    needs: [check]
     if: |
       always() &&
       inputs.pr-preview-mode != 'disabled' &&
-      needs.detect-build-skip.outputs.skip != 'true' &&
+      !contains(github.event.head_commit.message, '[NOBUILD]') &&
+      !contains(github.event.pull_request.title, '[NOBUILD]') &&
       (needs.check.result == 'success' || needs.check.result == 'skipped') &&
       (
         (inputs.pr-preview-mode == 'auto' &&
@@ -326,11 +296,11 @@ jobs:
   develop-build:
     name: Build Develop
     runs-on: ${{ inputs.build-runner }}
-    needs: [check, detect-build-skip]
+    needs: check
     if: |
       always() &&
       needs.check.result == 'success' &&
-      needs.detect-build-skip.outputs.skip != 'true' &&
+      !contains(github.event.head_commit.message, '[NOBUILD]') &&
       github.event_name == 'push' &&
       github.ref == format('refs/heads/{0}', inputs.develop-branch)
     environment: develop
@@ -399,11 +369,11 @@ jobs:
   release-build-verify:
     name: Verify Release Build
     runs-on: ${{ inputs.build-runner }}
-    needs: [check, detect-build-skip]
+    needs: check
     if: |
       inputs.enable-release-verify &&
       needs.check.result == 'success' &&
-      needs.detect-build-skip.outputs.skip != 'true' &&
+      !contains(github.event.pull_request.title, '[NOBUILD]') &&
       github.event_name == 'pull_request' &&
       github.event.action != 'closed' &&
       github.base_ref == inputs.production-branch
@@ -460,11 +430,11 @@ jobs:
   production-build:
     name: Build Production
     runs-on: ${{ inputs.build-runner }}
-    needs: [check, detect-build-skip]
+    needs: check
     if: |
       always() &&
       needs.check.result == 'success' &&
-      needs.detect-build-skip.outputs.skip != 'true' &&
+      !contains(github.event.head_commit.message, '[NOBUILD]') &&
       github.event_name == 'push' &&
       github.ref == format('refs/heads/{0}', inputs.production-branch)
     environment: production
