@@ -65,13 +65,33 @@ Full CI/CD pipeline for Node.js projects. Handles the entire lifecycle:
 
 | Stage | Trigger | What it does |
 |-------|---------|--------------|
-| **Check** | PR open/sync, push | Lint, typecheck, build, test (configurable) |
+| **Check** | PR open/sync, push | Lint, typecheck, build, test (configurable) — always runs |
 | **PR Preview** | `BUILD_PREVIEW` label or comment | Builds `pr-N` image, comments PR |
 | **Develop Build** | Push to develop | Auto-increments `dev-vX.Y.Z`, pushes + `dev-latest` |
 | **Release Verify** | PR to master | Build-only verification, comments PR with release info |
 | **Production Build** | Push to master | Extracts version from merge commit, pushes + `production-latest` |
 | **ArgoCD Restart** | After each build | Restarts deployment (if configured) |
 | **PR Cleanup** | PR closed | Deletes preview image from registry |
+
+### Skip Docker Builds with `[NOBUILD]`
+
+Add `[NOBUILD]` (case-insensitive) to a commit message or PR title/body to skip
+all Docker build stages. The `check` job (lint, typecheck, test) still runs,
+but no image will be built, tagged, or pushed.
+
+Use this for changes that don't require a new image:
+- Documentation updates (`README.md`, `docs/`)
+- Postman collections / API specs
+- Comments, formatting, non-code changes
+
+```bash
+# Direct commit to develop
+git commit -m "docs: update API examples [NOBUILD]"
+git push origin develop
+
+# In a PR title
+[NOBUILD] Fix typo in README
+```
 
 **Key inputs:**
 
