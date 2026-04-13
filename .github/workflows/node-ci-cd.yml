@@ -136,14 +136,14 @@ jobs:
       github.event.action != 'closed' &&
       github.event_name != 'issue_comment'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check for lockfile
         id: lockfile
         run: test -f package-lock.json && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ steps.lockfile.outputs.exists == 'true' && 'npm' || '' }}
@@ -204,7 +204,7 @@ jobs:
     steps:
       - name: Get PR details
         id: pr_details
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             let prNumber, headRef, headSha;
@@ -235,13 +235,13 @@ jobs:
             core.setOutput('head_ref', headRef);
             core.setOutput('head_sha', headSha);
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.pr_details.outputs.head_sha }}
 
       - name: Set up Node.js (for comment trigger)
         if: github.event_name == 'issue_comment'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ inputs.node-version }}
 
@@ -305,7 +305,7 @@ jobs:
     outputs:
       version_tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -354,7 +354,7 @@ jobs:
     needs: develop-build
     if: needs.develop-build.result == 'success'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -379,7 +379,7 @@ jobs:
       github.base_ref == inputs.production-branch
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Extract release version
         id: release_info
@@ -440,7 +440,7 @@ jobs:
     outputs:
       version_tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -489,7 +489,7 @@ jobs:
     needs: production-build
     if: needs.production-build.result == 'success'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -510,7 +510,7 @@ jobs:
     needs: [production-build, production-tag]
     if: needs.production-build.result == 'success' && needs.production-tag.result == 'success'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.develop-branch }}
           fetch-depth: 0
