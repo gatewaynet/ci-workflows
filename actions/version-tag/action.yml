@@ -74,17 +74,14 @@ runs:
             COMMIT_MSG=$(git log -1 --pretty=%B)
             echo "Commit message: $COMMIT_MSG"
 
-            # Try: release/vX.Y.Z, Release vX.Y.Z, or vX.Y.Z
-            VERSION=$(echo "$COMMIT_MSG" | grep -oP '(release/v|Release v|^v)\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            # Match release branch references regardless of separator:
+            #   release/vX.Y.Z, release: vX.Y.Z, release vX.Y.Z, Release vX.Y.Z, ^vX.Y.Z
+            VERSION=$(echo "$COMMIT_MSG" | grep -oiP '(release[/: ]+v|^v)\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 
             if [ -z "$VERSION" ]; then
-              if [ -f "package.json" ]; then
-                VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "")
-              fi
-            fi
-
-            if [ -z "$VERSION" ]; then
-              echo "Could not extract version from commit message or package.json"
+              echo "ERROR: Could not extract release version from commit message."
+              echo "Expected merge from a 'release/vX.Y.Z' branch (PR title like 'release: vX.Y.Z')."
+              echo "Falling back to package.json is disabled because it produced incorrect tags."
               exit 1
             fi
 
