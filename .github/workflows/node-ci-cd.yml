@@ -548,10 +548,18 @@ jobs:
           git add -A
           git diff --cached --quiet && echo "No changes to commit" && exit 0
           git commit -m "chore: bump version to $VERSION after release [skip ci]"
-          git push origin ${{ inputs.develop-branch }}
 
-          echo "### Version Synced" >> $GITHUB_STEP_SUMMARY
-          echo "Bumped \`${{ inputs.develop-branch }}\` to \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
+          # Push is best-effort: branch protection rulesets often block the bot.
+          # Failing here would mark the whole release pipeline red — the version
+          # bump is a convenience, not a release gate, so we warn instead.
+          if git push origin ${{ inputs.develop-branch }}; then
+            echo "### Version Synced" >> $GITHUB_STEP_SUMMARY
+            echo "Bumped \`${{ inputs.develop-branch }}\` to \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "::warning::Could not push version bump to ${{ inputs.develop-branch }} — likely branch protection. Bump manually if desired."
+            echo "### Version Sync Skipped" >> $GITHUB_STEP_SUMMARY
+            echo "Could not push to \`${{ inputs.develop-branch }}\` (branch protection). Bump manually if desired." >> $GITHUB_STEP_SUMMARY
+          fi
 
   # ============================================
   # STAGE 6: PR Cleanup
