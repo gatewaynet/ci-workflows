@@ -40,10 +40,15 @@ runs:
         ARGOCD_OPTS="--server ${{ inputs.argocd-server }} --auth-token ${{ inputs.argocd-auth-token }} --grpc-web --insecure"
 
         echo "Syncing ${APP} with --force..."
-        argocd app sync "${APP}" --force ${ARGOCD_OPTS}
-
-        echo "### ArgoCD Sync — ${APP}" >> $GITHUB_STEP_SUMMARY
-        echo "Forced sync triggered (pre-sync hooks will run)" >> $GITHUB_STEP_SUMMARY
+        # Non-fatal: sync warnings (failed pre-sync hooks, prune-pending resources)
+        # must not block the subsequent restart step.
+        if argocd app sync "${APP}" --force ${ARGOCD_OPTS}; then
+          echo "### ArgoCD Sync — ${APP}" >> $GITHUB_STEP_SUMMARY
+          echo "Forced sync triggered (pre-sync hooks will run)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "### ArgoCD Sync — ${APP} (warning)" >> $GITHUB_STEP_SUMMARY
+          echo "Sync returned non-zero (failed hooks or prune-pending resources). Continuing to restart." >> $GITHUB_STEP_SUMMARY
+        fi
 
     - name: Restart Deployment(s)
       shell: bash
