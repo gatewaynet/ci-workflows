@@ -111,6 +111,21 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      enable-test-restart:
+        description: 'Restart test env via ArgoCD after develop or PR preview build (uses test env vars/secrets)'
+        required: false
+        type: boolean
+        default: true
+      enable-develop-restart:
+        description: 'Restart develop env via ArgoCD after develop build (uses develop env vars/secrets)'
+        required: false
+        type: boolean
+        default: false
+      enable-production-restart:
+        description: 'Restart production env via ArgoCD after production build (uses production env vars/secrets)'
+        required: false
+        type: boolean
+        default: false
     secrets:
       DO_API_TOKEN:
         required: false
@@ -590,3 +605,69 @@ jobs:
             echo "### PR Image Cleanup" >> $GITHUB_STEP_SUMMARY
             echo "Image \`${IMAGE_TAG}\` not found (may not have been built)" >> $GITHUB_STEP_SUMMARY
           fi
+
+  # ============================================
+  # STAGE 7a: ArgoCD Restart — test env
+  # Runs after develop build OR PR preview build.
+  # Reads vars/secrets from the caller's `test` GitHub environment.
+  # ============================================
+  argocd-restart-test:
+    name: Restart (test)
+    runs-on: ubuntu-latest
+    needs: [develop-build, pr-preview-build]
+    if: |
+      always() && inputs.enable-test-restart &&
+      (needs.develop-build.result == 'success' || needs.pr-preview-build.result == 'success')
+    environment: test
+    continue-on-error: true
+    steps:
+      - uses: gatewaynet/ci-workflows/actions/argocd-restart@master
+        with:
+          app-name: ${{ vars.ARGOCD_APP_NAME }}
+          resource-name: ${{ vars.ARGOCD_DEPLOYMENTS }}
+          argocd-server: ${{ vars.ARGOCD_SERVER }}
+          argocd-auth-token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+
+  # ============================================
+  # STAGE 7b: ArgoCD Restart — develop env
+  # Runs after develop build only.
+  # Reads vars/secrets from the caller's `develop` GitHub environment.
+  # ============================================
+  argocd-restart-develop:
+    name: Restart (develop)
+    runs-on: ubuntu-latest
+    needs: [develop-build]
+    if: |
+      always() && inputs.enable-develop-restart &&
+      needs.develop-build.result == 'success'
+    environment: develop
+    continue-on-error: true
+    steps:
+      - uses: gatewaynet/ci-workflows/actions/argocd-restart@master
+        with:
+          app-name: ${{ vars.ARGOCD_APP_NAME }}
+          resource-name: ${{ vars.ARGOCD_DEPLOYMENTS }}
+          argocd-server: ${{ vars.ARGOCD_SERVER }}
+          argocd-auth-token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+
+  # ============================================
+  # STAGE 7c: ArgoCD Restart — production env
+  # Runs after production build only.
+  # Reads vars/secrets from the caller's `production` GitHub environment.
+  # ============================================
+  argocd-restart-production:
+    name: Restart (production)
+    runs-on: ubuntu-latest
+    needs: [production-build]
+    if: |
+      always() && inputs.enable-production-restart &&
+      needs.production-build.result == 'success'
+    environment: production
+    continue-on-error: true
+    steps:
+      - uses: gatewaynet/ci-workflows/actions/argocd-restart@master
+        with:
+          app-name: ${{ vars.ARGOCD_APP_NAME }}
+          resource-name: ${{ vars.ARGOCD_DEPLOYMENTS }}
+          argocd-server: ${{ vars.ARGOCD_SERVER }}
+          argocd-auth-token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
