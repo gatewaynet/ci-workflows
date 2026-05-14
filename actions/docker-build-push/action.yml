@@ -92,30 +92,35 @@ runs:
           done <<< "${{ inputs.build-args }}"
         fi
 
-        # Cache flags
+        # Cache flags — scope per image name so different services don't share
+        # layers, but builds for the same service reuse dependency layers.
         CACHE_FLAGS=""
         if [ "${{ inputs.use-buildx-cache }}" = "true" ]; then
-          CACHE_FLAGS="--cache-from type=gha --cache-to type=gha,mode=max"
+          CACHE_SCOPE="build-${{ inputs.image-name }}"
+          CACHE_FLAGS="--cache-from type=gha,scope=${CACHE_SCOPE} --cache-to type=gha,scope=${CACHE_SCOPE},mode=max"
         fi
 
-        # Build
-        docker buildx build \
-          $BUILD_ARGS \
-          $CACHE_FLAGS \
-          -f ${{ inputs.dockerfile }} \
-          $TAGS \
-          --load \
-          ${{ inputs.context }}
-
-        # Push
         if [ "${{ inputs.push }}" = "true" ]; then
-          docker push ${IMAGE}:${{ inputs.version-tag }}
-          for tag in "${EXTRA[@]}"; do
-            tag=$(echo "$tag" | xargs)
-            if [ -n "$tag" ]; then
-              docker push ${IMAGE}:${tag}
-            fi
-          done
+          # --push sends all tags directly to the registry in one buildx invocation,
+          # bypassing the local Docker daemon. This avoids stale-cache bugs where
+          # --load + type=gha replays layers built with different build args (e.g.
+          # APP_VERSION defaulting to 1.0.0-local instead of the injected value).
+          docker buildx build \
+            $BUILD_ARGS \
+            $CACHE_FLAGS \
+            -f ${{ inputs.dockerfile }} \
+            $TAGS \
+            --push \
+            ${{ inputs.context }}
+        else
+          # Verify-only: load into local daemon, no push.
+          docker buildx build \
+            $BUILD_ARGS \
+            $CACHE_FLAGS \
+            -f ${{ inputs.dockerfile }} \
+            $TAGS \
+            --load \
+            ${{ inputs.context }}
         fi
 
         echo "image=${IMAGE}:${{ inputs.version-tag }}" >> "$GITHUB_OUTPUT"
