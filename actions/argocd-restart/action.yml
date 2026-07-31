@@ -62,8 +62,9 @@ runs:
         ARGOCD_OPTS="--server ${SERVER} --auth-token ${TOKEN} --grpc-web --insecure"
 
         if [ "${RESOURCE_INPUT}" = "all" ]; then
+          # Columns: GROUP KIND NAMESPACE NAME [ORPHANED] — NAME is $4 (was wrongly $3 = namespace)
           RESOURCES=$(argocd app resources "${APP}" ${ARGOCD_OPTS} \
-            | awk -v kind="${KIND}" '$2 == kind {print $3}')
+            | awk -v kind="${KIND}" '$2 == kind {print $4}')
         else
           RESOURCES=$(echo "${RESOURCE_INPUT}" | tr ',' '\n' | sed 's/^ *//;s/ *$//')
         fi
@@ -96,4 +97,6 @@ runs:
         fi
         if [ -n "${FAILED}" ]; then
           echo -e "Failed:${FAILED}" >> $GITHUB_STEP_SUMMARY
+          echo "One or more restarts failed — failing the job so this is visible."
+          exit 1
         fi
