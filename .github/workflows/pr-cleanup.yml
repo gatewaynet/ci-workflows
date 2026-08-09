@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: 'registry.digitalocean.com/gatewaynet-service-repo'
+      runner:
+        description: 'Runner label for the cleanup job'
+        required: false
+        type: string
+        default: 'self-hosted-light'
     secrets:
       DO_API_TOKEN:
         required: true
@@ -24,7 +29,7 @@ on:
 jobs:
   cleanup:
     name: Cleanup PR Images
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.runner }}
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
     environment: develop
     steps:
