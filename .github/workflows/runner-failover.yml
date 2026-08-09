@@ -12,8 +12,10 @@ name: Runner Failover Watchdog
 # (≈2880 min/month — nearly the whole allotment).
 #
 # Requires repo secret CI_FAILOVER_TOKEN: fine-grained PAT for the gatewaynet
-# org with Organization permission "Variables: read & write". Without it the
-# job exits neutrally so the schedule never spams failures.
+# org with Organization permission "Variables: read & write" AND Repository
+# permission "Actions: read & write" on all repos (for the stuck-run requeue
+# sweep). Without it the job exits neutrally so the schedule never spams
+# failures.
 
 on:
   schedule:
@@ -37,6 +39,7 @@ env:
 jobs:
   watchdog:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check token
         id: token
@@ -92,4 +95,40 @@ jobs:
           else
             [ -n "$CURRENT" ] && echo "Cluster up but override='${CURRENT}' set manually — leaving it alone"
             echo "Steady state"
+          fi
+
+      # Runs queued before the flip stay pinned to self-hosted labels and
+      # would never start. Cancel + rerun makes them re-resolve runs-on with
+      # the override in place. Runs every offline tick (not just the first)
+      # to catch stragglers; label check keeps it precise.
+      - name: Requeue runs stuck on self-hosted labels
+        if: steps.token.outputs.configured == 'true' && steps.probe.outputs.up == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.CI_FAILOVER_TOKEN }}
+        run: |
+          set +e  # best-effort sweep: one bad repo must not abort the rest
+          REQUEUED=0
+          for REPO in $(gh api "orgs/${ORG}/repos?per_page=100" --paginate -q '.[].full_name'); do
+            for RUN in $(gh api "repos/${REPO}/actions/runs?status=queued&per_page=50" -q '.workflow_runs[].id' 2>/dev/null); do
+              STUCK=$(gh api "repos/${REPO}/actions/runs/${RUN}/jobs?per_page=100" \
+                -q '[.jobs[] | select(.status=="queued") | .labels[] | select(startswith("self-hosted"))] | length' 2>/dev/null)
+              [ -n "$STUCK" ] && [ "$STUCK" -gt 0 ] || continue
+
+              echo "Requeueing ${REPO} run ${RUN} (queued on self-hosted labels)"
+              gh api -X POST "repos/${REPO}/actions/runs/${RUN}/cancel" >/dev/null 2>&1
+              for _ in $(seq 1 10); do
+                sleep 3
+                [ "$(gh api "repos/${REPO}/actions/runs/${RUN}" -q .status 2>/dev/null)" = "completed" ] && break
+              done
+              if gh api -X POST "repos/${REPO}/actions/runs/${RUN}/rerun" >/dev/null 2>&1; then
+                REQUEUED=$((REQUEUED+1))
+              else
+                echo "::warning::Could not rerun ${REPO} run ${RUN} — rerun it manually"
+              fi
+            done
+          done
+
+          echo "Requeued ${REQUEUED} run(s)"
+          if [ "${REQUEUED}" -gt 0 ]; then
+            echo "### 🔁 Requeued ${REQUEUED} stuck run(s) onto \`${FALLBACK}\`" >> "$GITHUB_STEP_SUMMARY"
           fi

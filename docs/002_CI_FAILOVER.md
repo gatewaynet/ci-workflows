@@ -16,6 +16,10 @@ failure/timeout as down):
 
 - **Cluster offline + no override set** → sets org variable
   `CI_RUNNER_OVERRIDE=ubuntu-latest` — all repos fail over.
+- **While offline** → sweeps every org repo for queued runs whose jobs wait
+  on `self-hosted-*` labels (queued before the flip, would never start) and
+  cancel+reruns them so they re-resolve onto `ubuntu-latest`. Repeats each
+  tick to catch stragglers.
 - **Cluster back + override is exactly `ubuntu-latest`** → deletes the
   variable — traffic returns to self-hosted. A manually-set override with any
   other value is never touched.
@@ -25,13 +29,15 @@ the cron to `*/15` for ≤ ~15 min latency (≈ 2880 min/month — nearly the wh
 free allotment).
 
 **One-time setup:** create a fine-grained PAT for the `gatewaynet` org with
-Organization permission **Variables: read & write**, and store it as the
-`CI_FAILOVER_TOKEN` secret in this repo. Without the secret the watchdog runs
-neutrally and does nothing.
+Organization permission **Variables: read & write** and Repository permission
+**Actions: read & write** on all repositories (for the requeue sweep), and
+store it as the `CI_FAILOVER_TOKEN` secret in this repo. Without the secret
+the watchdog runs neutrally and does nothing.
 
-**Caveat:** jobs already queued against `self-hosted-*` labels before the
-flip stay queued — cancel and re-run them (`gh run cancel` + `gh run rerun`)
-to pick up the override. New pushes route correctly immediately.
+**Limitation:** the sweep targets runs whose overall status is `queued`. A
+run caught mid-pipeline (early jobs finished before the outage, later jobs
+queued) shows as `in_progress` and is left alone — re-run it manually if it
+matters during the outage; otherwise it resumes when the cluster returns.
 
 ## Manual switch — `CI_RUNNER_OVERRIDE`
 
