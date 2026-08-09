@@ -1,0 +1,95 @@
+name: Runner Failover Watchdog
+
+# Probes k8s-xeon from GitHub's side every 30 min. If the cluster is
+# unreachable, sets the org variable CI_RUNNER_OVERRIDE=ubuntu-latest so every
+# shared-workflow stage falls back to GitHub-hosted runners; clears it again
+# when the cluster comes back. Runs on ubuntu-latest by design — it must work
+# precisely when the self-hosted runners cannot.
+#
+# Cadence: */30 ≈ 1440 billed min/month (each run rounds up to 1 min),
+# comfortably inside the 3000 included Team-plan minutes that normal CI no
+# longer consumes. Tighten to */15 for faster detection if desired
+# (≈2880 min/month — nearly the whole allotment).
+#
+# Requires repo secret CI_FAILOVER_TOKEN: fine-grained PAT for the gatewaynet
+# org with Organization permission "Variables: read & write". Without it the
+# job exits neutrally so the schedule never spams failures.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: runner-failover
+  cancel-in-progress: false
+
+env:
+  # Any HTTP response (even 4xx/5xx) proves the cluster's ingress is up;
+  # only connection failure / timeout counts as offline.
+  PROBE_URL: https://argocd.clanroot.dev
+  ORG: gatewaynet
+  VAR_NAME: CI_RUNNER_OVERRIDE
+  FALLBACK: ubuntu-latest
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check token
+        id: token
+        env:
+          GH_TOKEN: ${{ secrets.CI_FAILOVER_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::CI_FAILOVER_TOKEN not configured — watchdog inactive"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Probe k8s-xeon
+        id: probe
+        if: steps.token.outputs.configured == 'true'
+        run: |
+          probe() { curl -sS -o /dev/null -m 10 "$PROBE_URL"; }
+          # Two attempts 30s apart — a transient blip must not flip the org
+          if probe; then
+            echo "up=true" >> "$GITHUB_OUTPUT"; echo "Cluster reachable"; exit 0
+          fi
+          echo "First probe failed, retrying in 30s..."
+          sleep 30
+          if probe; then
+            echo "up=true" >> "$GITHUB_OUTPUT"; echo "Cluster reachable (2nd attempt)"
+          else
+            echo "up=false" >> "$GITHUB_OUTPUT"; echo "Cluster OFFLINE"
+          fi
+
+      - name: Reconcile override variable
+        if: steps.token.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CI_FAILOVER_TOKEN }}
+          UP: ${{ steps.probe.outputs.up }}
+        run: |
+          CURRENT=$(gh api "orgs/${ORG}/actions/variables/${VAR_NAME}" -q .value 2>/dev/null || echo "")
+
+          if [ "$UP" = "false" ] && [ -z "$CURRENT" ]; then
+            gh api -X POST "orgs/${ORG}/actions/variables" \
+              -f name="${VAR_NAME}" -f value="${FALLBACK}" -f visibility=all
+            echo "::warning::k8s-xeon offline — CI failed over to ${FALLBACK}"
+            echo "### ⚠️ Failover ACTIVE → \`${FALLBACK}\`" >> "$GITHUB_STEP_SUMMARY"
+
+          elif [ "$UP" = "true" ] && [ "$CURRENT" = "${FALLBACK}" ]; then
+            # Only clear the value we set ourselves — never clobber a manual override
+            gh api -X DELETE "orgs/${ORG}/actions/variables/${VAR_NAME}"
+            echo "::notice::k8s-xeon back — CI returned to self-hosted runners"
+            echo "### ✅ Recovered → self-hosted" >> "$GITHUB_STEP_SUMMARY"
+
+          elif [ "$UP" = "false" ]; then
+            echo "Offline, override already set (${CURRENT}) — nothing to do"
+          else
+            [ -n "$CURRENT" ] && echo "Cluster up but override='${CURRENT}' set manually — leaving it alone"
+            echo "Steady state"
+          fi

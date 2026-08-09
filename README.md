@@ -7,7 +7,7 @@ Centralized reusable GitHub Actions workflows and composite actions for all gate
 Documentation:
 - [docs/000_INTEGRATION_GUIDE.md](docs/000_INTEGRATION_GUIDE.md) — how to integrate the shared pipeline into a project
 - [docs/001_SELF_HOSTED_RUNNERS.md](docs/001_SELF_HOSTED_RUNNERS.md) — shared runners on k8s-xeon: labels, scoping, adding coverage, troubleshooting
-- [docs/002_BACKUP_RUNNER_DROPLET.md](docs/002_BACKUP_RUNNER_DROPLET.md) — HA failover plan (`CI_RUNNER_OVERRIDE` + backup droplet)
+- [docs/002_CI_FAILOVER.md](docs/002_CI_FAILOVER.md) — automatic failover to GitHub-hosted runners when k8s-xeon is offline
 
 ## Quick Start
 
@@ -173,7 +173,7 @@ with:
 ```
 
 Disaster failover: set the org/repo variable `CI_RUNNER_OVERRIDE` to redirect
-all stages at once ([docs/002_BACKUP_RUNNER_DROPLET.md](docs/002_BACKUP_RUNNER_DROPLET.md)).
+all stages at once ([docs/002_CI_FAILOVER.md](docs/002_CI_FAILOVER.md)).
 
 ## Required Repository Setup
 

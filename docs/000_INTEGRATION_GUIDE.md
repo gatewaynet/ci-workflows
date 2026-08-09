@@ -78,7 +78,7 @@ with:
 
 A repo- or org-level variable `CI_RUNNER_OVERRIDE` overrides **all** stages at
 once (disaster failover — see
-[002_BACKUP_RUNNER_DROPLET.md](002_BACKUP_RUNNER_DROPLET.md)). Leave it unset
+[002_CI_FAILOVER.md](002_CI_FAILOVER.md)). Leave it unset
 in normal operation.
 
 ## 4. Commonly used inputs

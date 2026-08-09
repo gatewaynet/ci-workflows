@@ -70,7 +70,7 @@ GitHub's `ubuntu-latest`:
 If k8s-xeon is down, set the org variable `CI_RUNNER_OVERRIDE` to move every
 stage of every repo to another runner (`self-hosted-backup` droplet or
 `ubuntu-latest`) with a single switch. Full runbook:
-[002_BACKUP_RUNNER_DROPLET.md](002_BACKUP_RUNNER_DROPLET.md).
+[002_CI_FAILOVER.md](002_CI_FAILOVER.md).
 
 ## Operations cheat-sheet
 
