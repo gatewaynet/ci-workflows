@@ -105,12 +105,17 @@ on:
         description: 'Runner label for check jobs'
         required: false
         type: string
-        default: 'ubuntu-latest'
+        default: 'self-hosted-light'
       build-runner:
         description: 'Runner label for Docker build jobs'
         required: false
         type: string
-        default: 'ubuntu-latest'
+        default: 'self-hosted-heavy'
+      utility-runner:
+        description: 'Runner label for light utility jobs (tags, version sync, ArgoCD restarts, cleanup)'
+        required: false
+        type: string
+        default: 'self-hosted-light'
       enable-test-restart:
         description: 'Restart test env via ArgoCD after develop or PR preview build (uses test env vars/secrets)'
         required: false
@@ -144,9 +149,12 @@ jobs:
   # ============================================
   # STAGE 1: Check (Lint, Build, Test)
   # ============================================
+  # All runs-on lines honor the caller's CI_RUNNER_OVERRIDE repo/org variable:
+  # set it (e.g. to self-hosted-backup or ubuntu-latest) to move every stage
+  # off the k8s runners during an outage — no workflow edits needed.
   check:
     name: Check
-    runs-on: ${{ inputs.check-runner }}
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.check-runner }}
     if: |
       github.event.action != 'closed' &&
       github.event_name != 'issue_comment'
@@ -193,7 +201,7 @@ jobs:
   # ============================================
   pr-preview-build:
     name: PR Preview Build
-    runs-on: ${{ inputs.build-runner }}
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.build-runner }}
     needs: [check]
     if: |
       always() &&
@@ -308,7 +316,7 @@ jobs:
   # ============================================
   develop-build:
     name: Build Develop
-    runs-on: ${{ inputs.build-runner }}
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.build-runner }}
     needs: check
     if: |
       always() &&
@@ -361,11 +369,10 @@ jobs:
 
   # ============================================
   # STAGE 3b: Develop Tag (post-build)
-  # Always runs on GitHub-hosted runner
   # ============================================
   develop-tag:
     name: Tag Develop
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.utility-runner }}
     needs: develop-build
     if: needs.develop-build.result == 'success'
     steps:
@@ -384,7 +391,7 @@ jobs:
   # ============================================
   release-build-verify:
     name: Verify Release Build
-    runs-on: ${{ inputs.build-runner }}
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.build-runner }}
     needs: check
     if: |
       inputs.enable-release-verify &&
@@ -444,7 +451,7 @@ jobs:
   # ============================================
   production-build:
     name: Build Production
-    runs-on: ${{ inputs.build-runner }}
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.build-runner }}
     needs: check
     if: |
       always() &&
@@ -496,11 +503,10 @@ jobs:
 
   # ============================================
   # STAGE 5b: Production Tag (post-build)
-  # Always runs on GitHub-hosted runner
   # ============================================
   production-tag:
     name: Tag Production
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.utility-runner }}
     needs: production-build
     if: needs.production-build.result == 'success'
     steps:
@@ -521,7 +527,7 @@ jobs:
   # ============================================
   sync-version-to-develop:
     name: Sync Version to Develop
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.utility-runner }}
     needs: [production-build, production-tag]
     if: needs.production-build.result == 'success' && needs.production-tag.result == 'success'
     steps:
@@ -530,6 +536,12 @@ jobs:
           ref: ${{ inputs.develop-branch }}
           fetch-depth: 0
           token: ${{ github.token }}
+
+      # Self-hosted ARC runners do not ship node/npm on PATH
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
 
       - name: Bump package.json to released version
         run: |
@@ -581,7 +593,7 @@ jobs:
   # ============================================
   pr-cleanup:
     name: PR Cleanup
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.utility-runner }}
     if: |
       github.event_name == 'pull_request' &&
       github.event.action == 'closed'
@@ -613,7 +625,7 @@ jobs:
   # ============================================
   argocd-restart-test:
     name: Restart (test)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.utility-runner }}
     needs: [develop-build, pr-preview-build]
     if: |
       always() && inputs.enable-test-restart &&
@@ -635,7 +647,7 @@ jobs:
   # ============================================
   argocd-restart-develop:
     name: Restart (develop)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.utility-runner }}
     needs: [develop-build]
     if: |
       always() && inputs.enable-develop-restart &&
@@ -657,7 +669,7 @@ jobs:
   # ============================================
   argocd-restart-production:
     name: Restart (production)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.utility-runner }}
     needs: [production-build]
     if: |
       always() && inputs.enable-production-restart &&

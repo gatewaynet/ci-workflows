@@ -2,6 +2,13 @@
 
 Centralized reusable GitHub Actions workflows and composite actions for all gatewaynet projects.
 
+**All pipeline stages run on the shared self-hosted ARC runners on k8s-xeon by default — no billed GitHub-hosted minutes.**
+
+Documentation:
+- [docs/000_INTEGRATION_GUIDE.md](docs/000_INTEGRATION_GUIDE.md) — how to integrate the shared pipeline into a project
+- [docs/001_SELF_HOSTED_RUNNERS.md](docs/001_SELF_HOSTED_RUNNERS.md) — shared runners on k8s-xeon: labels, scoping, adding coverage, troubleshooting
+- [docs/002_BACKUP_RUNNER_DROPLET.md](docs/002_BACKUP_RUNNER_DROPLET.md) — HA failover plan (`CI_RUNNER_OVERRIDE` + backup droplet)
+
 ## Quick Start
 
 Add this to your project's `.github/workflows/ci-cd.yml`:
@@ -39,6 +46,7 @@ jobs:
 
 ```
 ci-workflows/
+├── docs/                       # Integration guide, runner docs, HA runbook
 ├── .github/workflows/          # Reusable workflows (workflow_call)
 │   ├── node-ci-cd.yml          # Node.js CI/CD pipeline
 │   └── pr-cleanup.yml          # Standalone PR image cleanup
@@ -107,8 +115,9 @@ git push origin develop
 | `run-build` | `false` | Run build check |
 | `run-typecheck` | `false` | Run type checking |
 | `run-audit` | `false` | Run security audit |
-| `check-runner` | `ubuntu-latest` | Runner for check jobs |
-| `build-runner` | `ubuntu-latest` | Runner for Docker builds |
+| `check-runner` | `self-hosted-light` | Runner for check jobs |
+| `build-runner` | `self-hosted-heavy` | Runner for Docker builds |
+| `utility-runner` | `self-hosted-light` | Runner for tags, version sync, ArgoCD restarts, cleanup |
 | `dockerfile` | `Dockerfile` | Dockerfile path |
 | `docker-build-args` | `""` | Extra build args (newline-separated) |
 
@@ -150,15 +159,21 @@ Two runner scale sets via ARC (Actions Runner Controller) on the K8s cluster:
 
 | Runner | Label | Resources | Use for |
 |--------|-------|-----------|---------|
-| Light | `self-hosted-light` | 2 CPU, 4Gi | General self-hosted needs |
-| Heavy | `self-hosted-heavy` | 4 CPU, 8Gi + DinD | E2E, Go race tests, multi-image builds |
+| Light | `self-hosted-light` | 2 CPU, 4Gi | Checks, tags, ArgoCD restarts, cleanup |
+| Heavy | `self-hosted-heavy` | 4 CPU, 8Gi + DinD | Docker builds, E2E, Go race tests |
 
-Override in caller workflows:
+These are the defaults for every stage. Your repo must be covered by a
+matching runner scale set (org-wide or repo-scoped) or jobs will queue
+forever — see [docs/001_SELF_HOSTED_RUNNERS.md](docs/001_SELF_HOSTED_RUNNERS.md).
+
+Opt back into GitHub-hosted (billed) per repo if ever needed:
 ```yaml
 with:
-  check-runner: "ubuntu-latest"       # lint stays on GitHub
-  build-runner: "self-hosted-heavy"   # heavy builds on K8s
+  check-runner: "ubuntu-latest"
 ```
+
+Disaster failover: set the org/repo variable `CI_RUNNER_OVERRIDE` to redirect
+all stages at once ([docs/002_BACKUP_RUNNER_DROPLET.md](docs/002_BACKUP_RUNNER_DROPLET.md)).
 
 ## Required Repository Setup
 
