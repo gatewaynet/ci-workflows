@@ -105,7 +105,7 @@ on:
         description: 'Runner label for check jobs'
         required: false
         type: string
-        default: 'self-hosted-light'
+        default: 'self-hosted-heavy'
       build-runner:
         description: 'Runner label for Docker build jobs'
         required: false
@@ -115,7 +115,7 @@ on:
         description: 'Runner label for light utility jobs (tags, version sync, ArgoCD restarts, cleanup)'
         required: false
         type: string
-        default: 'self-hosted-light'
+        default: 'self-hosted-heavy'
       enable-test-restart:
         description: 'Restart test env via ArgoCD after develop or PR preview build (uses test env vars/secrets)'
         required: false

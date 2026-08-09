@@ -21,7 +21,7 @@ on:
         description: 'Runner label for the cleanup job'
         required: false
         type: string
-        default: 'self-hosted-light'
+        default: 'self-hosted-heavy'
     secrets:
       DO_API_TOKEN:
         required: true

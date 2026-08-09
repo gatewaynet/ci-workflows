@@ -56,14 +56,14 @@ get these secrets/vars/environments there, not by hand.
 
 | Stage | Trigger | Runner (default) |
 |---|---|---|
-| Check (lint/typecheck/build/test) | Every PR sync + push | `self-hosted-light` |
+| Check (lint/typecheck/build/test) | Every PR sync + push | `self-hosted-heavy` |
 | PR Preview Build | `BUILD_PREVIEW` label or PR comment (`pr-preview-mode: label`), or every PR to develop (`auto`) | `self-hosted-heavy` |
-| Develop Build + `dev-vX.Y.Z` tag | Push to `develop` | `self-hosted-heavy` / `self-hosted-light` |
+| Develop Build + `dev-vX.Y.Z` tag | Push to `develop` | `self-hosted-heavy` |
 | Release Verify (build only, no push) | PR targeting `master` | `self-hosted-heavy` |
-| Production Build + `vX.Y.Z` tag | Push to `master` (merge commit must reference `release: vX.Y.Z`) | `self-hosted-heavy` / `self-hosted-light` |
-| Version sync to develop | After production release | `self-hosted-light` |
-| ArgoCD restarts (test/develop/production) | After the matching build, per `enable-*-restart` inputs | `self-hosted-light` |
-| PR image cleanup | PR closed | `self-hosted-light` |
+| Production Build + `vX.Y.Z` tag | Push to `master` (merge commit must reference `release: vX.Y.Z`) | `self-hosted-heavy` |
+| Version sync to develop | After production release | `self-hosted-heavy` |
+| ArgoCD restarts (test/develop/production) | After the matching build, per `enable-*-restart` inputs | `self-hosted-heavy` |
+| PR image cleanup | PR closed | `self-hosted-heavy` |
 
 **All stages run on the shared self-hosted runners by default** — no
 GitHub-hosted minutes are consumed. Override per repo only if you have a
@@ -73,7 +73,7 @@ reason:
 with:
   check-runner: "ubuntu-latest"        # opt back into GitHub-hosted (billed)
   build-runner: "self-hosted-heavy"
-  utility-runner: "self-hosted-light"
+  utility-runner: "self-hosted-heavy"
 ```
 
 A repo variable `CI_RUNNER_OVERRIDE` (reconciled across all repos by the failover watchdog) overrides **all** stages at
@@ -96,7 +96,7 @@ in normal operation.
 | `develop-branch` / `production-branch` | `develop` / `master` | |
 | `enable-test-restart` | `true` | Uses the `test` GitHub environment |
 | `enable-develop-restart` / `enable-production-restart` | `false` | |
-| `check-runner` / `build-runner` / `utility-runner` | `self-hosted-light` / `self-hosted-heavy` / `self-hosted-light` | |
+| `check-runner` / `build-runner` / `utility-runner` | `self-hosted-heavy` (all three; per-repo scale sets register heavy only) | |
 
 ## 5. Skipping a develop build
 

@@ -115,9 +115,9 @@ git push origin develop
 | `run-build` | `false` | Run build check |
 | `run-typecheck` | `false` | Run type checking |
 | `run-audit` | `false` | Run security audit |
-| `check-runner` | `self-hosted-light` | Runner for check jobs |
+| `check-runner` | `self-hosted-heavy` | Runner for check jobs |
 | `build-runner` | `self-hosted-heavy` | Runner for Docker builds |
-| `utility-runner` | `self-hosted-light` | Runner for tags, version sync, ArgoCD restarts, cleanup |
+| `utility-runner` | `self-hosted-heavy` | Runner for tags, version sync, ArgoCD restarts, cleanup |
 | `dockerfile` | `Dockerfile` | Dockerfile path |
 | `docker-build-args` | `""` | Extra build args (newline-separated) |
 
@@ -159,7 +159,7 @@ Two runner scale sets via ARC (Actions Runner Controller) on the K8s cluster:
 
 | Runner | Label | Resources | Use for |
 |--------|-------|-----------|---------|
-| Light | `self-hosted-light` | 2 CPU, 4Gi | Checks, tags, ArgoCD restarts, cleanup |
+| Light | `self-hosted-light` | 2 CPU, 4Gi | platform-engine only (legacy); shared workflows default to heavy |
 | Heavy | `self-hosted-heavy` | 4 CPU, 8Gi + DinD | Docker builds, E2E, Go race tests |
 
 These are the defaults for every stage. Your repo must be covered by a
