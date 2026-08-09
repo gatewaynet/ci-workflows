@@ -76,7 +76,7 @@ with:
   utility-runner: "self-hosted-light"
 ```
 
-A repo- or org-level variable `CI_RUNNER_OVERRIDE` overrides **all** stages at
+A repo variable `CI_RUNNER_OVERRIDE` (reconciled across all repos by the failover watchdog) overrides **all** stages at
 once (disaster failover — see
 [002_CI_FAILOVER.md](002_CI_FAILOVER.md)). Leave it unset
 in normal operation.

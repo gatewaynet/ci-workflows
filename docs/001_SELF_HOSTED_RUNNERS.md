@@ -31,10 +31,16 @@ Current state (deployed via `infra.env/applications/test/shared/github-runners/`
 | `affiliate-backend` | repo `gatewaynet/affiliate-backend` | `self-hosted-heavy` |
 
 **A repo without a covering scale set that targets `runs-on:
-self-hosted-*` will queue forever.** The reference values in
-`runners/runner-scale-sets/` in this repo define **org-wide**
-`self-hosted-light` + `self-hosted-heavy` scale sets that cover every
-gatewaynet repo; once those are deployed, per-repo sets become redundant.
+self-hosted-*` will queue forever.**
+
+> **⚠️ Important — `gatewaynet` is a personal user account, not an
+> organization.** GitHub has no user-level runner registration, so
+> **org-wide scale sets are not possible today**: every repo needs its own
+> repo-scoped scale set pair. The org-wide values in
+> `runners/runner-scale-sets/` only become deployable if the account is
+> converted to an organization (GitHub Settings → Organizations → "Turn
+> gatewaynet into an organization") — which would also unlock org variables,
+> runner groups, and org secrets.
 
 ## Getting runner coverage for your repo
 
@@ -67,8 +73,8 @@ GitHub's `ubuntu-latest`:
 
 ## Outage failover
 
-If k8s-xeon is down, set the org variable `CI_RUNNER_OVERRIDE` to move every
-stage of every repo to another runner (`self-hosted-backup` droplet or
+If k8s-xeon is down, the failover watchdog sets `CI_RUNNER_OVERRIDE` on every repo to move every
+stage to GitHub-hosted runners (or
 `ubuntu-latest`) with a single switch. Full runbook:
 [002_CI_FAILOVER.md](002_CI_FAILOVER.md).
 

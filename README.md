@@ -172,7 +172,7 @@ with:
   check-runner: "ubuntu-latest"
 ```
 
-Disaster failover: set the org/repo variable `CI_RUNNER_OVERRIDE` to redirect
+Disaster failover: the watchdog sets the repo variable `CI_RUNNER_OVERRIDE` on every repo to redirect
 all stages at once ([docs/002_CI_FAILOVER.md](docs/002_CI_FAILOVER.md)).
 
 ## Required Repository Setup

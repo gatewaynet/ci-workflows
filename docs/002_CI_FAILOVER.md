@@ -14,25 +14,30 @@ available for the watchdog and outage-mode builds.
 (two attempts, 30s apart — any HTTP response counts as up, only connection
 failure/timeout as down):
 
-- **Cluster offline + no override set** → sets org variable
-  `CI_RUNNER_OVERRIDE=ubuntu-latest` — all repos fail over.
-- **While offline** → sweeps every org repo for queued runs whose jobs wait
+- **Cluster offline** → sets the repo variable
+  `CI_RUNNER_OVERRIDE=ubuntu-latest` on **every owned repo** — all pipelines
+  fail over. (`gatewaynet` is a personal user account, so there are no org
+  variables; the watchdog reconciles per-repo instead.)
+- **While offline** → sweeps every repo for queued runs whose jobs wait
   on `self-hosted-*` labels (queued before the flip, would never start) and
   cancel+reruns them so they re-resolve onto `ubuntu-latest`. Repeats each
   tick to catch stragglers.
-- **Cluster back + override is exactly `ubuntu-latest`** → deletes the
-  variable — traffic returns to self-hosted. A manually-set override with any
-  other value is never touched.
+- **Cluster back** → deletes the variable from every repo where its value is
+  exactly `ubuntu-latest` — traffic returns to self-hosted. A manually-set
+  override with any other value (e.g. `ubuntu-24.04` — same GitHub-hosted
+  image, different label) is never touched: use that to force failover
+  manually without the watchdog reverting it.
 
 Detection latency is ≤ ~30 min; cost ≈ 1440 included minutes/month. Tighten
 the cron to `*/15` for ≤ ~15 min latency (≈ 2880 min/month — nearly the whole
 free allotment).
 
-**One-time setup:** create a fine-grained PAT for the `gatewaynet` org with
-Organization permission **Variables: read & write** and Repository permission
-**Actions: read & write** on all repositories (for the requeue sweep), and
-store it as the `CI_FAILOVER_TOKEN` secret in this repo. Without the secret
-the watchdog runs neutrally and does nothing.
+**One-time setup (done 2026-08-09):** a fine-grained PAT (owner `gatewaynet`,
+access to **All repositories**, Repository permissions **Actions: read &
+write** + **Variables: read & write**) stored as the `CI_FAILOVER_TOKEN`
+secret in this repo. Expires **2026-09-08** — watchdog runs turn red when it
+lapses; rotate then. Without the secret the watchdog runs neutrally and does
+nothing.
 
 **Limitation:** the sweep targets runs whose overall status is `queued`. A
 run caught mid-pipeline (early jobs finished before the outage, later jobs
@@ -47,23 +52,20 @@ Every `runs-on` in the shared workflows resolves as:
 runs-on: ${{ vars.CI_RUNNER_OVERRIDE || inputs.<stage>-runner }}
 ```
 
-`vars` resolves from the calling repo, falling back to the **org-level**
-variable, so one variable moves every stage of every repo.
+`vars` resolves from the calling repo's variables (`gatewaynet` is a user
+account — there is no org-level fallback).
 
-### Outage (k8s-xeon unreachable)
-
-```bash
-gh api -X POST orgs/gatewaynet/actions/variables \
-  -f name=CI_RUNNER_OVERRIDE -f value=ubuntu-latest -f visibility=all
-```
-
-Already-queued jobs stay pinned to their original label — re-run them
-(`gh run rerun <id>`) after setting the variable so they pick up the override.
-
-### Recovery
+The watchdog handles the switch automatically. To force it by hand, prefer
+triggering the watchdog (`gh workflow run runner-failover.yml -R
+gatewaynet/ci-workflows`) — it reconciles based on the actual probe. To force
+failover **while the cluster is up** (e.g. runners misbehaving but reachable),
+use a value the watchdog won't auto-revert:
 
 ```bash
-gh api -X DELETE orgs/gatewaynet/actions/variables/CI_RUNNER_OVERRIDE
+# force (per affected repo; ubuntu-24.04 = GitHub-hosted, watchdog leaves it alone)
+gh variable set CI_RUNNER_OVERRIDE -b ubuntu-24.04 -R gatewaynet/<repo>
+# undo
+gh variable delete CI_RUNNER_OVERRIDE -R gatewaynet/<repo>
 ```
 
 ## What works during failover
@@ -85,7 +87,7 @@ runner. This is why the droplet option below was rejected.
 ## Rejected alternative — backup droplet
 
 Considered 2026-08: a DO droplet (`s-4vcpu-8gb`, ~$48/mo each, 2× for HA)
-registered as an org-level classic runner with label `self-hosted-backup`.
+registered as a classic runner with label `self-hosted-backup`.
 Rejected: standing cost exceeds the realistic spend on GitHub-hosted minutes
 during rare connectivity outages. If outage frequency ever changes, the
 sketch: Ubuntu + Docker CE + classic runner as systemd service, org-scoped,

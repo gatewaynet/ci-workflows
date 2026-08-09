@@ -1,21 +1,24 @@
 name: Runner Failover Watchdog
 
 # Probes k8s-xeon from GitHub's side every 30 min. If the cluster is
-# unreachable, sets the org variable CI_RUNNER_OVERRIDE=ubuntu-latest so every
-# shared-workflow stage falls back to GitHub-hosted runners; clears it again
+# unreachable, sets CI_RUNNER_OVERRIDE=ubuntu-latest on every repo so all
+# shared-workflow stages fall back to GitHub-hosted runners; clears it again
 # when the cluster comes back. Runs on ubuntu-latest by design — it must work
 # precisely when the self-hosted runners cannot.
 #
+# gatewaynet is a personal user account (no organization), so there is no
+# org-variables API — the override is reconciled as a REPO variable across
+# all owned repos instead. The shared workflows read vars.CI_RUNNER_OVERRIDE,
+# which resolves repo variables.
+#
 # Cadence: */30 ≈ 1440 billed min/month (each run rounds up to 1 min),
 # comfortably inside the 3000 included Team-plan minutes that normal CI no
-# longer consumes. Tighten to */15 for faster detection if desired
-# (≈2880 min/month — nearly the whole allotment).
+# longer consumes.
 #
-# Requires repo secret CI_FAILOVER_TOKEN: fine-grained PAT for the gatewaynet
-# org with Organization permission "Variables: read & write" AND Repository
-# permission "Actions: read & write" on all repos (for the stuck-run requeue
-# sweep). Without it the job exits neutrally so the schedule never spams
-# failures.
+# Requires repo secret CI_FAILOVER_TOKEN: fine-grained PAT (owner gatewaynet)
+# with access to All repositories and Repository permissions
+# "Actions: read & write" + "Variables: read & write". Without it the job
+# exits neutrally so the schedule never spams failures.
 
 on:
   schedule:
@@ -32,7 +35,6 @@ env:
   # Any HTTP response (even 4xx/5xx) proves the cluster's ingress is up;
   # only connection failure / timeout counts as offline.
   PROBE_URL: https://argocd.clanroot.dev
-  ORG: gatewaynet
   VAR_NAME: CI_RUNNER_OVERRIDE
   FALLBACK: ubuntu-latest
 
@@ -58,7 +60,7 @@ jobs:
         if: steps.token.outputs.configured == 'true'
         run: |
           probe() { curl -sS -o /dev/null -m 10 "$PROBE_URL"; }
-          # Two attempts 30s apart — a transient blip must not flip the org
+          # Two attempts 30s apart — a transient blip must not flip CI
           if probe; then
             echo "up=true" >> "$GITHUB_OUTPUT"; echo "Cluster reachable"; exit 0
           fi
@@ -70,37 +72,44 @@ jobs:
             echo "up=false" >> "$GITHUB_OUTPUT"; echo "Cluster OFFLINE"
           fi
 
-      - name: Reconcile override variable
+      - name: Reconcile override variable on all repos
         if: steps.token.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ secrets.CI_FAILOVER_TOKEN }}
           UP: ${{ steps.probe.outputs.up }}
         run: |
-          CURRENT=$(gh api "orgs/${ORG}/actions/variables/${VAR_NAME}" -q .value 2>/dev/null || echo "")
+          set +e  # best-effort: one bad repo must not abort the rest
+          gh api "user/repos?affiliation=owner&per_page=100" --paginate \
+            -q '.[].full_name' > "$RUNNER_TEMP/repos.txt"
+          echo "Reconciling $(wc -l < "$RUNNER_TEMP/repos.txt" | xargs) repos (cluster up=${UP})"
 
-          if [ "$UP" = "false" ] && [ -z "$CURRENT" ]; then
-            gh api -X POST "orgs/${ORG}/actions/variables" \
-              -f name="${VAR_NAME}" -f value="${FALLBACK}" -f visibility=all
-            echo "::warning::k8s-xeon offline — CI failed over to ${FALLBACK}"
-            echo "### ⚠️ Failover ACTIVE → \`${FALLBACK}\`" >> "$GITHUB_STEP_SUMMARY"
+          SET=0; CLEARED=0
+          while read -r REPO; do
+            CURRENT=$(gh api "repos/${REPO}/actions/variables/${VAR_NAME}" -q .value 2>/dev/null)
+            if [ "$UP" = "false" ] && [ -z "$CURRENT" ]; then
+              gh api -X POST "repos/${REPO}/actions/variables" \
+                -f name="${VAR_NAME}" -f value="${FALLBACK}" >/dev/null 2>&1 && SET=$((SET+1))
+            elif [ "$UP" = "true" ] && [ "$CURRENT" = "${FALLBACK}" ]; then
+              # Only clear the exact value we set — a manual override with any
+              # other value (e.g. ubuntu-24.04) is never touched
+              gh api -X DELETE "repos/${REPO}/actions/variables/${VAR_NAME}" >/dev/null 2>&1 && CLEARED=$((CLEARED+1))
+            fi
+          done < "$RUNNER_TEMP/repos.txt"
 
-          elif [ "$UP" = "true" ] && [ "$CURRENT" = "${FALLBACK}" ]; then
-            # Only clear the value we set ourselves — never clobber a manual override
-            gh api -X DELETE "orgs/${ORG}/actions/variables/${VAR_NAME}"
-            echo "::notice::k8s-xeon back — CI returned to self-hosted runners"
-            echo "### ✅ Recovered → self-hosted" >> "$GITHUB_STEP_SUMMARY"
-
-          elif [ "$UP" = "false" ]; then
-            echo "Offline, override already set (${CURRENT}) — nothing to do"
+          if [ "$SET" -gt 0 ]; then
+            echo "::warning::k8s-xeon offline — failed over ${SET} repo(s) to ${FALLBACK}"
+            echo "### ⚠️ Failover ACTIVE → \`${FALLBACK}\` (${SET} repos)" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$CLEARED" -gt 0 ]; then
+            echo "::notice::k8s-xeon back — ${CLEARED} repo(s) returned to self-hosted runners"
+            echo "### ✅ Recovered → self-hosted (${CLEARED} repos)" >> "$GITHUB_STEP_SUMMARY"
           else
-            [ -n "$CURRENT" ] && echo "Cluster up but override='${CURRENT}' set manually — leaving it alone"
-            echo "Steady state"
+            echo "Steady state — nothing to change"
           fi
 
       # Runs queued before the flip stay pinned to self-hosted labels and
       # would never start. Cancel + rerun makes them re-resolve runs-on with
       # the override in place. Runs every offline tick (not just the first)
-      # to catch stragglers; label check keeps it precise.
+      # to catch stragglers; the label check keeps it precise.
       - name: Requeue runs stuck on self-hosted labels
         if: steps.token.outputs.configured == 'true' && steps.probe.outputs.up == 'false'
         env:
@@ -108,7 +117,7 @@ jobs:
         run: |
           set +e  # best-effort sweep: one bad repo must not abort the rest
           REQUEUED=0
-          for REPO in $(gh api "orgs/${ORG}/repos?per_page=100" --paginate -q '.[].full_name'); do
+          while read -r REPO; do
             for RUN in $(gh api "repos/${REPO}/actions/runs?status=queued&per_page=50" -q '.workflow_runs[].id' 2>/dev/null); do
               STUCK=$(gh api "repos/${REPO}/actions/runs/${RUN}/jobs?per_page=100" \
                 -q '[.jobs[] | select(.status=="queued") | .labels[] | select(startswith("self-hosted"))] | length' 2>/dev/null)
@@ -126,7 +135,7 @@ jobs:
                 echo "::warning::Could not rerun ${REPO} run ${RUN} — rerun it manually"
               fi
             done
-          done
+          done < "$RUNNER_TEMP/repos.txt"
 
           echo "Requeued ${REQUEUED} run(s)"
           if [ "${REQUEUED}" -gt 0 ]; then
