@@ -81,6 +81,32 @@ Full CI/CD pipeline for Node.js projects. Handles the entire lifecycle:
 | **ArgoCD Restart** | After each build | Restarts deployment (if configured) |
 | **PR Cleanup** | PR closed | Deletes preview image from registry |
 
+#### Package managers
+
+`npm` and `pnpm` are both supported and detected from the lockfile — `pnpm-lock.yaml`
+wins over `package-lock.json`. Nothing needs passing for the common case:
+
+```yaml
+with:
+  node-version: "24"
+  image-name: "my-service"
+  # package-manager: pnpm   # only to override detection
+  # pnpm-version: "10"      # only if package.json has no "packageManager" field
+```
+
+The install command follows the detected manager (`npm ci` /
+`pnpm install --frozen-lockfile`, falling back to a plain `install` when there is no
+lockfile), and so do the script calls: `run-lint: true` means `npm run lint` in an npm
+repo and `pnpm run lint` in a pnpm one. Passing any `*-command` input still wins
+verbatim.
+
+**pnpm needs a version from somewhere.** Either keep a `"packageManager":
+"pnpm@<version>"` field in `package.json` (recommended — one source of truth for local
+and CI) or pass `pnpm-version`. Setting both to different values is an error.
+
+`yarn.lock` is rejected with an explicit error rather than silently installed with the
+wrong manager — classic and berry need different flags and berry needs corepack.
+
 ### Skip Develop Build with `[NOBUILD]`
 
 Add `[NOBUILD]` to a commit message on the develop branch to skip the Docker
@@ -128,6 +154,13 @@ git push origin develop
 Use individually in custom workflows:
 
 ```yaml
+- uses: gatewaynet/ci-workflows/actions/node-setup@master
+  id: node
+  with:
+    node-version: "24"
+    package-manager: auto     # auto (detect from lockfile) | npm | pnpm
+- run: ${{ steps.node.outputs.run-prefix }} lint   # "npm run lint" / "pnpm run lint"
+
 - uses: gatewaynet/ci-workflows/actions/do-registry-login@master
   with:
     do-api-token: ${{ secrets.DO_API_TOKEN }}

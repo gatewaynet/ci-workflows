@@ -1,0 +1,133 @@
+name: 'Node Setup'
+description: 'Detect the package manager from the lockfile, install it, set up Node with the matching dependency cache, and install dependencies'
+
+inputs:
+  node-version:
+    description: 'Node.js version passed to actions/setup-node'
+    required: true
+  package-manager:
+    description: 'Package manager: "auto" (detect from lockfile), "npm" or "pnpm"'
+    required: false
+    default: 'auto'
+  pnpm-version:
+    description: 'pnpm version. Leave empty to take it from the "packageManager" field in package.json (recommended) — setting both and disagreeing is an error in pnpm/action-setup'
+    required: false
+    default: ''
+  install:
+    description: 'Run the dependency install (set false to only set up the toolchain)'
+    required: false
+    default: 'true'
+  install-command:
+    description: 'Override the install command. Empty uses the detected manager default'
+    required: false
+    default: ''
+
+outputs:
+  manager:
+    description: 'The resolved package manager: npm or pnpm'
+    value: ${{ steps.detect.outputs.manager }}
+  has-lockfile:
+    description: 'Whether the manager lockfile was found'
+    value: ${{ steps.detect.outputs.has_lockfile }}
+  install-command:
+    description: 'The install command that was resolved (and run, unless install=false)'
+    value: ${{ steps.detect.outputs.install_command }}
+  run-prefix:
+    description: 'Script runner prefix for this manager — "npm run" or "pnpm run". Compose script calls as "${{ steps.x.outputs.run-prefix }} lint"'
+    value: ${{ steps.detect.outputs.run_prefix }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Detect package manager
+      id: detect
+      shell: bash
+      run: |
+        set -euo pipefail
+        MANAGER="${{ inputs.package-manager }}"
+
+        if [ -z "$MANAGER" ] || [ "$MANAGER" = "auto" ]; then
+          if [ -f pnpm-lock.yaml ]; then
+            MANAGER="pnpm"
+          elif [ -f package-lock.json ]; then
+            MANAGER="npm"
+          elif [ -f yarn.lock ]; then
+            # Fail loudly rather than silently installing with the wrong manager:
+            # yarn classic and berry need different install flags and berry needs
+            # corepack, so "probably fine" is not good enough here.
+            echo "::error::yarn.lock found but yarn is not supported by this action. Pass package-manager explicitly and supply install-command, or migrate to npm/pnpm."
+            exit 1
+          else
+            # No lockfile at all. npm is the safe default, but `npm ci` requires a
+            # lockfile — the install command below falls back to `npm install`.
+            MANAGER="npm"
+          fi
+          echo "detected package manager: ${MANAGER}"
+        else
+          echo "package manager pinned by caller: ${MANAGER}"
+        fi
+
+        case "$MANAGER" in
+          pnpm)
+            LOCKFILE="pnpm-lock.yaml"
+            LOCKED_INSTALL="pnpm install --frozen-lockfile"
+            LOOSE_INSTALL="pnpm install"
+            RUN_PREFIX="pnpm run"
+            ;;
+          npm)
+            LOCKFILE="package-lock.json"
+            LOCKED_INSTALL="npm ci"
+            LOOSE_INSTALL="npm install"
+            RUN_PREFIX="npm run"
+            ;;
+          *)
+            echo "::error::unsupported package-manager '${MANAGER}' — use auto, npm or pnpm"
+            exit 1
+            ;;
+        esac
+
+        if [ -f "$LOCKFILE" ]; then
+          HAS_LOCKFILE="true"
+          DEFAULT_INSTALL="$LOCKED_INSTALL"
+          # setup-node only knows how to key a cache when the lockfile exists.
+          CACHE="$MANAGER"
+        else
+          HAS_LOCKFILE="false"
+          DEFAULT_INSTALL="$LOOSE_INSTALL"
+          CACHE=""
+          echo "::warning::no ${LOCKFILE} found — installing without a lockfile and without a dependency cache"
+        fi
+
+        INSTALL_COMMAND="${{ inputs.install-command }}"
+        if [ -z "$INSTALL_COMMAND" ]; then
+          INSTALL_COMMAND="$DEFAULT_INSTALL"
+        fi
+
+        {
+          echo "manager=${MANAGER}"
+          echo "has_lockfile=${HAS_LOCKFILE}"
+          echo "cache=${CACHE}"
+          echo "run_prefix=${RUN_PREFIX}"
+          echo "install_command=${INSTALL_COMMAND}"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "manager=${MANAGER} lockfile=${HAS_LOCKFILE} install='${INSTALL_COMMAND}'"
+
+    # Must run BEFORE setup-node: `cache: pnpm` makes setup-node call
+    # `pnpm store path`, which fails if pnpm is not on PATH yet.
+    - name: Set up pnpm
+      if: steps.detect.outputs.manager == 'pnpm'
+      uses: pnpm/action-setup@v4
+      with:
+        version: ${{ inputs.pnpm-version }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: ${{ steps.detect.outputs.cache }}
+
+    - name: Install dependencies
+      if: inputs.install == 'true'
+      shell: bash
+      run: ${{ steps.detect.outputs.install_command }}
