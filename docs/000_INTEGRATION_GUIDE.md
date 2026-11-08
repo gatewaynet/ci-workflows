@@ -37,6 +37,41 @@ jobs:
 That's the whole pipeline: check → PR preview → develop build → release
 verify → production build → ArgoCD restart → PR cleanup.
 
+### pnpm
+
+Nothing extra in the caller. The lockfile decides, and install plus every script call
+follow it:
+
+```yaml
+jobs:
+  pipeline:
+    uses: gatewaynet/ci-workflows/.github/workflows/node-ci-cd.yml@master
+    with:
+      node-version: "24"
+      image-name: "my-service"
+      run-lint: true
+      run-tests: true
+    secrets: inherit
+```
+
+Keep `"packageManager": "pnpm@<version>"` in `package.json` so local and CI agree on the
+version — otherwise pass `pnpm-version`.
+
+For a workspace that builds more than one image, call the workflow once per image and
+switch the checks off on the second call so the suite does not run twice:
+
+```yaml
+jobs:
+  app:
+    uses: gatewaynet/ci-workflows/.github/workflows/node-ci-cd.yml@master
+    with: { node-version: "24", image-name: "my-app", run-lint: true, run-tests: true }
+    secrets: inherit
+  console:
+    uses: gatewaynet/ci-workflows/.github/workflows/node-ci-cd.yml@master
+    with: { node-version: "24", image-name: "my-console", run-lint: false, run-tests: false }
+    secrets: inherit
+```
+
 ## 2. One-time repository setup
 
 | Item | Where | Value |
@@ -86,10 +121,12 @@ in normal operation.
 | Input | Default | Notes |
 |---|---|---|
 | `node-version` | _(required)_ | Passed to `actions/setup-node` |
+| `package-manager` | `auto` | `auto` detects from the lockfile (`pnpm-lock.yaml` wins over `package-lock.json`); or pin `npm` / `pnpm`. `yarn.lock` is an explicit error |
+| `pnpm-version` | `''` | Empty takes it from `"packageManager"` in `package.json` (recommended). Setting both and disagreeing is an error |
 | `image-name` | _(required)_ | Image name in the DO registry |
 | `registry` | `registry.digitalocean.com/gatewaynet-service-repo` | |
-| `run-lint` / `run-tests` / `run-build` / `run-typecheck` / `run-audit` | `true`/`false`/`false`/`false`/`false` | Each has a matching `*-command` input |
-| `install-command` | `npm ci` | Use `pnpm install --frozen-lockfile` etc. |
+| `run-lint` / `run-tests` / `run-build` / `run-typecheck` / `run-audit` | `true`/`false`/`false`/`false`/`false` | Each has a matching `*-command` input. Left empty they resolve against the detected manager — `npm run lint` or `pnpm run lint` |
+| `install-command` | _(manager default)_ | `npm ci` / `pnpm install --frozen-lockfile`, or a plain `install` with no lockfile. Pass a value to override |
 | `dockerfile` | `Dockerfile` | |
 | `docker-build-args` | `""` | Newline-separated `KEY=value` pairs |
 | `pr-preview-mode` | `label` | `label` / `auto` / `disabled` |

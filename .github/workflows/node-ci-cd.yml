@@ -7,6 +7,16 @@ on:
         description: 'Node.js version'
         required: true
         type: string
+      package-manager:
+        description: 'Package manager: "auto" (detect from the lockfile), "npm" or "pnpm"'
+        required: false
+        type: string
+        default: 'auto'
+      pnpm-version:
+        description: 'pnpm version. Leave empty to take it from the "packageManager" field in package.json (recommended)'
+        required: false
+        type: string
+        default: ''
       image-name:
         description: 'Docker image name (e.g. bonus-engine)'
         required: true
@@ -22,55 +32,55 @@ on:
         type: boolean
         default: true
       lint-command:
-        description: 'Lint command'
+        description: 'Lint command. Empty resolves to "<manager> run lint"'
         required: false
         type: string
-        default: 'npm run lint'
+        default: ''
       run-build:
         description: 'Run build check'
         required: false
         type: boolean
         default: false
       build-command:
-        description: 'Build command'
+        description: 'Build command. Empty resolves to "<manager> run build"'
         required: false
         type: string
-        default: 'npm run build'
+        default: ''
       run-tests:
         description: 'Run tests'
         required: false
         type: boolean
         default: false
       test-command:
-        description: 'Test command'
+        description: 'Test command. Empty resolves to "<manager> run test"'
         required: false
         type: string
-        default: 'npm test'
+        default: ''
       run-typecheck:
         description: 'Run type checking'
         required: false
         type: boolean
         default: false
       typecheck-command:
-        description: 'Type check command'
+        description: 'Type check command. Empty resolves to "<manager> run type-check"'
         required: false
         type: string
-        default: 'npm run type-check'
+        default: ''
       run-audit:
         description: 'Run security audit'
         required: false
         type: boolean
         default: false
       audit-command:
-        description: 'Security audit command'
+        description: 'Security audit command. Empty resolves to "<manager> run audit:security"'
         required: false
         type: string
-        default: 'npm run audit:security'
+        default: ''
       install-command:
-        description: 'Dependency install command'
+        description: 'Dependency install command. Empty resolves to "npm ci" / "pnpm install --frozen-lockfile" per the detected manager'
         required: false
         type: string
-        default: 'npm ci'
+        default: ''
       dockerfile:
         description: 'Path to Dockerfile'
         required: false
@@ -161,38 +171,34 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Check for lockfile
-        id: lockfile
-        run: test -f package-lock.json && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up Node and install dependencies
+        id: node
+        uses: gatewaynet/ci-workflows/actions/node-setup@master
         with:
           node-version: ${{ inputs.node-version }}
-          cache: ${{ steps.lockfile.outputs.exists == 'true' && 'npm' || '' }}
-
-      - name: Install dependencies
-        run: ${{ inputs.install-command }}
+          package-manager: ${{ inputs.package-manager }}
+          pnpm-version: ${{ inputs.pnpm-version }}
+          install-command: ${{ inputs.install-command }}
 
       - name: Security Audit
         if: inputs.run-audit
-        run: ${{ inputs.audit-command }}
+        run: ${{ inputs.audit-command || format('{0} audit:security', steps.node.outputs.run-prefix) }}
 
       - name: Type Check
         if: inputs.run-typecheck
-        run: ${{ inputs.typecheck-command }}
+        run: ${{ inputs.typecheck-command || format('{0} type-check', steps.node.outputs.run-prefix) }}
 
       - name: Lint
         if: inputs.run-lint
-        run: ${{ inputs.lint-command }}
+        run: ${{ inputs.lint-command || format('{0} lint', steps.node.outputs.run-prefix) }}
 
       - name: Build
         if: inputs.run-build
-        run: ${{ inputs.build-command }}
+        run: ${{ inputs.build-command || format('{0} build', steps.node.outputs.run-prefix) }}
 
       - name: Test
         if: inputs.run-tests
-        run: ${{ inputs.test-command }}
+        run: ${{ inputs.test-command || format('{0} test', steps.node.outputs.run-prefix) }}
 
   # ============================================
   # STAGE 2: PR Preview Build
@@ -262,17 +268,19 @@ jobs:
         with:
           ref: ${{ steps.pr_details.outputs.head_sha }}
 
-      - name: Set up Node.js (for comment trigger)
+      - name: Set up Node and install dependencies (for comment trigger)
+        id: node
         if: github.event_name == 'issue_comment'
-        uses: actions/setup-node@v6
+        uses: gatewaynet/ci-workflows/actions/node-setup@master
         with:
           node-version: ${{ inputs.node-version }}
+          package-manager: ${{ inputs.package-manager }}
+          pnpm-version: ${{ inputs.pnpm-version }}
+          install-command: ${{ inputs.install-command }}
 
-      - name: Run checks (for comment trigger)
+      - name: Lint (for comment trigger)
         if: github.event_name == 'issue_comment'
-        run: |
-          ${{ inputs.install-command }}
-          ${{ inputs.lint-command }}
+        run: ${{ inputs.lint-command || format('{0} lint', steps.node.outputs.run-prefix) }}
 
       - name: Login to Registry
         uses: gatewaynet/ci-workflows/actions/do-registry-login@master
@@ -537,7 +545,11 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
-      # Self-hosted ARC runners do not ship node/npm on PATH
+      # Self-hosted ARC runners do not ship node/npm on PATH.
+      # Deliberately plain setup-node and not actions/node-setup: this job only
+      # rewrites the version field in package.json, so it needs no dependencies
+      # and no package manager beyond the npm that ships with node. `npm version`
+      # edits package.json identically in a pnpm repo and touches no lockfile.
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:

@@ -60,7 +60,10 @@ The runner image is `ghcr.io/actions/actions-runner` — much slimmer than
 GitHub's `ubuntu-latest`:
 
 - **No node/npm on PATH** — always use `actions/setup-node` before running
-  npm/node commands.
+  npm/node commands, and **no pnpm either**: `pnpm/action-setup` must run *before*
+  `actions/setup-node`, because `cache: pnpm` makes setup-node shell out to
+  `pnpm store path`. The `actions/node-setup` composite action does both in the right
+  order — use it rather than wiring the two by hand.
 - **`/usr/local/bin` is root-owned** — install tools into `$RUNNER_TEMP` and
   append to `$GITHUB_PATH` (see `actions/argocd-restart` for the pattern), or
   use `sudo` (passwordless sudo is available).
